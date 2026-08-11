@@ -9,6 +9,9 @@
         <router-link to="/stats" :class="{ active: $route.name === 'stats' }">
           数据看板
         </router-link>
+        <router-link to="/publish" :class="{ active: $route.name === 'publish' }">
+          发布技能
+        </router-link>
       </nav>
     </header>
     <router-view />

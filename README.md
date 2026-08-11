@@ -64,7 +64,9 @@ pnpm dev:mcp
 - [x] Skill 发布 / 版本管理 / CLI（鉴权待接入）
 - [x] 数据库迁移与发布持久化闭环
 - [ ] MCP Server（tools + prompts 原语）
-- [ ] Web Console 技能市场
+- [x] Web Console 技能市场（Vue 3 + Element Plus）
+- [x] Web 端发布 skill（表单组装 SKILL.md，复用 publish 接口）
+- [x] 数据看板（概览/趋势/技能排行）
 - [ ] 企业微信登录 + 部门级可见性
 - [ ] 调用埋点与数据看板
 - [ ] 需求许愿与投票

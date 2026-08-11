@@ -34,6 +34,19 @@ export async function fetchSkillDetail(slug: string): Promise<SkillDetail> {
   return json.data;
 }
 
+/** 发布 skill（组装好的 SKILL.md 全文） */
+export async function publishSkill(content: string, changelog: string): Promise<void> {
+  const res = await fetch("/api/skills/publish", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, changelog }),
+  });
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(json.error ?? `发布失败（${res.status}）`);
+  }
+}
+
 /** 埋点上报（fire-and-forget） */
 export function reportEvent(slug: string, event: "view" | "favorite" | "rate"): void {
   void fetch(`/api/skills/${slug}/events`, {
