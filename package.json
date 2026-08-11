@@ -1,0 +1,25 @@
+{
+  "name": "skillhive",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SkillHive —— 企业内部 AI Skill 中枢：IT 集中开发与治理，全员通过 MCP 客户端使用",
+  "license": "MIT",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "dev:registry": "pnpm --filter @skillhive/registry dev",
+    "dev:mcp": "pnpm --filter @skillhive/mcp-server dev",
+    "dev:console": "pnpm --filter @skillhive/console dev",
+    "dev:cli": "pnpm --filter skillhive-cli dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @skillhive/db db:generate",
+    "db:migrate": "pnpm --filter @skillhive/db db:migrate",
+    "db:studio": "pnpm --filter @skillhive/db db:studio"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,11 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# 允许以下依赖执行安装构建脚本（pnpm 11 默认拦截）
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+allowBuilds:
+  esbuild: set this to true or false
+  sharp: set this to true or false
