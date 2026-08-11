@@ -3,21 +3,34 @@
 > 目标：用最小成本（半天以内）验证 SkillHive 与腾讯 WorkBuddy 的 MCP 集成可行性。
 > POC 通过前，不投入任何后续开发。
 
-## POC 要回答的 4 个问题
+## ✅ 已确认的信息（来自 WorkBuddy 官方文档，2026-08）
+
+- **Q1 ✅ 支持自定义 MCP Server**，配置方式为 JSON 配置文件中的 `mcpServers` 字段
+- **Q2 ✅ 传输方式**：SSE / HTTP 模式（远程 URL 接入）；鉴权支持 `Authorization: Bearer <token>` 请求头
+- **Q3 ✅ 网络**：配置示例使用 localhost，WorkBuddy 为本地客户端形态，可直接访问本机服务，无需内网穿透
+
+### WorkBuddy 配置示例（填入其 MCP 配置文件）
+
+```json
+{
+  "mcpServers": {
+    "skillhive": {
+      "url": "http://localhost:3100/sse"
+    }
+  }
+}
+```
+
+## 待验证的问题
 
 | # | 问题 | 不通过的后果 |
 |---|---|---|
-| Q1 | WorkBuddy 是否支持接入企业自定义 MCP Server？ | 项目需要换客户端载体（重大变更） |
-| Q2 | 支持哪种传输与鉴权？（Streamable HTTP / SSE；Token / OAuth） | 影响 MCP Server 的部署形态 |
-| Q3 | WorkBuddy 能否访问到部署在企业内网的 MCP Server？ | 需要调整网络/部署方案 |
-| Q4 | 是否支持 MCP `prompts` 原语（用户主动选用的模板）？ | 决定消费体验设计（降级为 tools 返回内容） |
+| Q4 | WorkBuddy 是否支持 MCP `prompts` 原语（用户主动选用的模板）？ | 决定消费体验设计（降级为 tools 返回内容） |
+| Q5 | SSE 实际联调是否顺畅（工具发现、对话中调用） | 排查协议细节差异 |
 
-## 第 0 步：信息收集（1 小时，不写代码）
+## 第 0 步：信息收集（已完成 ✅）
 
-- [ ] 查阅 WorkBuddy 官方文档 / 管理后台，找「MCP」「自定义工具」「插件」「开放平台」相关入口
-- [ ] 确认你们使用的是 **SaaS 版还是私有化部署版**（直接影响 Q3）
-- [ ] 确认配置 MCP Server 需要什么权限（超级管理员？应用管理员？）
-- [ ] 如果文档不清楚，直接问 WorkBuddy 的客户成功/技术支持，把 Q1/Q2 抛给他们
+已确认 WorkBuddy 支持 SSE/HTTP 远程 MCP 接入，见文档顶部「已确认的信息」。
 
 ## 第 1 步：启动 POC 服务器（10 分钟）
 
@@ -40,26 +53,18 @@ curl -X POST http://localhost:3100/mcp \
 # 预期：返回 search_skills / list_skills / get_skill 三个工具
 ```
 
-## 第 2 步：让 WorkBuddy 能访问到 POC 服务器
+## 第 2 步：网络打通（已简化 ✅）
 
-按实际情况三选一：
-
-| 场景 | 方案 |
-|---|---|
-| WorkBuddy 私有化部署在内网 | 把 POC 服务跑在一台内网服务器上即可 |
-| WorkBuddy 是 SaaS，公司允许暴露测试端口 | 内网穿透（frp / ngrok / cloudflared）临时暴露 3100 端口 |
-| 公司安全策略不允许任何暴露 | 申请一台有公网入口的测试云主机部署 POC |
+WorkBuddy 为本地客户端，直接访问 `localhost:3100` 即可，无需内网穿透。
+若后续要在公司服务器部署供多人使用，将 URL 换成服务器地址即可。
 
 ## 第 3 步：在 WorkBuddy 中配置 MCP Server
 
-在 WorkBuddy 管理后台的 MCP/工具配置入口添加：
-
-- **Server URL**：`http(s)://<你的地址>/mcp`
-- **鉴权**：POC 阶段留空（我们暂未实现鉴权，勿在内网外长期暴露）
+将文档顶部的配置 JSON 填入 WorkBuddy 的 MCP 配置文件，保存后重启/刷新 WorkBuddy。
 
 ## 第 4 步：验证清单
 
-- [ ] **连接成功**：WorkBuddy 显示 MCP Server 已连接/可用 → Q1 ✅
+- [ ] **连接成功**：WorkBuddy 显示 skillhive MCP Server 已连接/可用
 - [ ] **工具发现**：能看到 `list_skills` / `search_skills` / `get_skill` 三个工具
 - [ ] **对话调用**：在 WorkBuddy 对话中输入「帮我列出公司可用的 AI skill」，观察是否调用 `list_skills` 并返回 weekly-report / invoice-extract
 - [ ] **内容执行**：输入「用周报 skill 帮我写周报」，观察是否调用 `get_skill` 获取模板并执行
@@ -69,16 +74,14 @@ curl -X POST http://localhost:3100/mcp \
 
 | 问题 | 结论 | 备注 |
 |---|---|---|
-| Q1 支持自定义 MCP？ | ☐ 是 / ☐ 否 | |
-| Q2 传输方式 / 鉴权 | | |
-| Q3 网络可达性 | | |
 | Q4 支持 prompts 原语？ | ☐ 是 / ☐ 否 | |
+| Q5 SSE 联调顺畅？ | ☐ 是 / ☐ 否 | |
 
 ## 常见失败与对策
 
 | 现象 | 可能原因 | 对策 |
 |---|---|---|
-| 添加 Server 时报连接失败 | 网络不通 / 只支持 HTTPS | 换 HTTPS（caddy 反代）或检查网络 |
-| 连接成功但看不到工具 | 只支持 SSE 旧协议 | 告诉我们，补 SSE transport |
-| 工具调用无响应 | 鉴权要求 / 请求体大小限制 | 抓包确认请求格式 |
+| 连接失败/一直转圈 | 服务没启动 / 端口不对 | 先 `curl http://localhost:3100/health` 自检 |
+| 连接成功但看不到工具 | 协议不兼容 | 换 `http://localhost:3100/mcp`（Streamable HTTP）再试 |
+| 工具调用无响应 | 会话过期 / 请求格式差异 | 看 MCP Server 终端日志，带现象反馈 |
 | 对话中模型不主动调工具 | 工具描述不清晰 | 正常现象，prompts 原语才是消费主路径 |
