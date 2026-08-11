@@ -41,22 +41,23 @@ IT 部门（发布者）                     全体员工（消费者）
 # 1. 安装依赖
 pnpm install
 
-# 2. 启动本地数据库
-docker compose up -d
+# 2. 初始化数据库迁移（首次）
+docker compose up -d postgres && pnpm db:migrate
 
-# 3. 初始化环境变量
-cp .env.example .env
-
-# 4. 生成并执行数据库迁移
-pnpm db:generate
-pnpm db:migrate
-
-# 5. 启动 Registry 服务（终端 1）
-pnpm dev:registry
-
-# 6. 启动 MCP Server（终端 2）
-pnpm dev:mcp
+# 3. 一键启动全部服务（数据库 + Registry + MCP Server + Console）
+pnpm dev
 ```
+
+启动后访问：
+
+| 服务 | 地址 |
+|---|---|
+| Console 技能市场 | http://localhost:3000 |
+| 数据看板 | http://localhost:3000/stats |
+| Registry API | http://localhost:3001/health |
+| MCP Server（WorkBuddy 连 /sse） | http://localhost:3100/health |
+
+也可以按需单独启动：`pnpm dev:registry` / `pnpm dev:mcp` / `pnpm dev:console`。
 
 ## 路线图
 

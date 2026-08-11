@@ -6,6 +6,7 @@
   "license": "MIT",
   "packageManager": "pnpm@11.9.0",
   "scripts": {
+    "dev": "docker compose up -d postgres && concurrently -n registry,mcp,console -c yellow,green,cyan \"pnpm dev:registry\" \"pnpm dev:mcp\" \"pnpm dev:console\"",
     "dev:registry": "pnpm --filter @skillhive/registry dev",
     "dev:mcp": "pnpm --filter @skillhive/mcp-server dev",
     "dev:console": "pnpm --filter @skillhive/console dev",
@@ -17,6 +18,7 @@
     "db:studio": "pnpm --filter @skillhive/db db:studio"
   },
   "devDependencies": {
+    "concurrently": "^9.2.0",
     "typescript": "^5.7.3"
   },
   "engines": {
