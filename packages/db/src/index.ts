@@ -5,7 +5,7 @@ import * as schema from "./schema.js";
 export * from "./schema.js";
 
 const connectionString =
-  process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/skillhive";
+  process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5434/skillhive";
 
 const pool = new Pool({ connectionString });
 

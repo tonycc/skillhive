@@ -61,7 +61,8 @@ pnpm dev:mcp
 ## 路线图
 
 - [x] 项目骨架与数据模型
-- [ ] Skill 发布 / 版本管理 / CLI
+- [x] Skill 发布 / 版本管理 / CLI（鉴权待接入）
+- [x] 数据库迁移与发布持久化闭环
 - [ ] MCP Server（tools + prompts 原语）
 - [ ] Web Console 技能市场
 - [ ] 企业微信登录 + 部门级可见性

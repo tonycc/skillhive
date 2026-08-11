@@ -1,15 +1,31 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
-import { db, skills } from "@skillhive/db";
-import { eq, desc } from "drizzle-orm";
+import {
+  db,
+  skills,
+  skillVersions,
+  departments,
+  skillDepartmentVisibility,
+} from "@skillhive/db";
+import { and, eq, desc, inArray } from "drizzle-orm";
 import { parseSkillMd } from "@skillhive/skill-schema";
+
+/** 版本冲突时抛出，用于在事务外映射为 409 */
+class VersionConflictError extends Error {
+  constructor(
+    public readonly slug: string,
+    public readonly version: string,
+  ) {
+    super(`skill "${slug}" 的版本 ${version} 已存在，请提升版本号后重新发布`);
+  }
+}
 
 const app = new Hono();
 
 /** GET /api/skills — 技能市场列表（按更新时间倒序） */
 app.get("/", async (c) => {
-  // TODO: 接入鉴权后按用户部门过滤可见性
+  // TODO: 接入鉴权后按用户所在部门过滤可见性
   const list = await db
     .select({
       id: skills.id,
@@ -26,15 +42,41 @@ app.get("/", async (c) => {
   return c.json({ data: list });
 });
 
-/** GET /api/skills/:slug — skill 详情（含最新版本内容） */
+/** GET /api/skills/:slug — skill 详情（含最新版本内容与可见部门） */
 app.get("/:slug", async (c) => {
   const slug = c.req.param("slug");
+
   const skill = await db.query.skills.findFirst({
     where: eq(skills.slug, slug),
   });
-  if (!skill) return c.json({ error: "skill 不存在" }, 404);
-  // TODO: 关联查询最新版本内容、调用量、评分
-  return c.json({ data: skill });
+  if (!skill) return c.json({ error: `skill "${slug}" 不存在` }, 404);
+
+  // 最新版本
+  const [latest] = await db
+    .select()
+    .from(skillVersions)
+    .where(eq(skillVersions.skillId, skill.id))
+    .orderBy(desc(skillVersions.createdAt))
+    .limit(1);
+
+  // 可见部门（空数组 = 全员可见）
+  const visibility = await db
+    .select({ name: departments.name })
+    .from(skillDepartmentVisibility)
+    .innerJoin(departments, eq(skillDepartmentVisibility.departmentId, departments.id))
+    .where(eq(skillDepartmentVisibility.skillId, skill.id));
+
+  // TODO: 上报 view 埋点、聚合调用量与评分
+
+  return c.json({
+    data: {
+      ...skill,
+      latestVersion: latest
+        ? { version: latest.version, content: latest.content, changelog: latest.changelog }
+        : null,
+      visibleDepartments: visibility.map((v) => v.name),
+    },
+  });
 });
 
 const publishSchema = z.object({
@@ -47,7 +89,7 @@ const publishSchema = z.object({
 app.post("/publish", zValidator("json", publishSchema), async (c) => {
   const { content, changelog } = c.req.valid("json");
 
-  // 1. 校验 SKILL.md 格式（不合法会直接抛错，由 zodValidator 之外的异常处理兜底）
+  // 1. 校验 SKILL.md 格式
   let parsed;
   try {
     parsed = parseSkillMd(content);
@@ -55,21 +97,93 @@ app.post("/publish", zValidator("json", publishSchema), async (c) => {
     return c.json({ error: (err as Error).message }, 400);
   }
 
-  // TODO: 2. 鉴权 —— 仅 publisher/admin 角色可发布
-  // TODO: 3. upsert skill + 写入 skill_versions（同事务）
-  // TODO: 4. 按 frontmatter.departments 更新可见性
+  const slug = parsed.frontmatter.name;
+  const version = parsed.frontmatter.version ?? "0.1.0";
 
-  return c.json(
-    {
-      data: {
-        slug: parsed.frontmatter.name,
-        version: parsed.frontmatter.version ?? "0.1.0",
-        changelog,
+  // TODO: 2. 鉴权 —— 仅 publisher/admin 角色可发布，ownerId/publishedBy 取当前用户
+
+  try {
+    const result = await db.transaction(async (tx) => {
+      // 3. upsert skill 主记录（已存在则更新摘要与分类，并置为 published）
+      const [skill] = await tx
+        .insert(skills)
+        .values({
+          slug,
+          name: slug,
+          summary: parsed.frontmatter.description,
+          category: parsed.frontmatter.category ?? "通用",
+          status: "published",
+        })
+        .onConflictDoUpdate({
+          target: skills.slug,
+          set: {
+            summary: parsed.frontmatter.description,
+            category: parsed.frontmatter.category ?? "通用",
+            status: "published",
+          },
+        })
+        .returning();
+
+      // 4. 版本号防重
+      const dup = await tx.query.skillVersions.findFirst({
+        where: and(
+          eq(skillVersions.skillId, skill.id),
+          eq(skillVersions.version, version),
+        ),
+      });
+      if (dup) throw new VersionConflictError(slug, version);
+
+      // 5. 写入新版本
+      const [skillVersion] = await tx
+        .insert(skillVersions)
+        .values({ skillId: skill.id, version, content, changelog })
+        .returning();
+
+      // 6. 更新部门可见性：缺省 = 全员可见（清空限制）
+      await tx
+        .delete(skillDepartmentVisibility)
+        .where(eq(skillDepartmentVisibility.skillId, skill.id));
+
+      const deptNames = parsed.frontmatter.departments ?? [];
+      if (deptNames.length > 0) {
+        // 部门不存在则自动创建（MVP 简化；正式版应来自企业微信组织架构同步）
+        await tx
+          .insert(departments)
+          .values(deptNames.map((name) => ({ name })))
+          .onConflictDoNothing({ target: departments.name });
+
+        const deptRows = await tx
+          .select({ id: departments.id })
+          .from(departments)
+          .where(inArray(departments.name, deptNames));
+
+        if (deptRows.length > 0) {
+          await tx.insert(skillDepartmentVisibility).values(
+            deptRows.map((d) => ({ skillId: skill.id, departmentId: d.id })),
+          );
+        }
+      }
+
+      return { skill, skillVersion };
+    });
+
+    return c.json(
+      {
+        data: {
+          slug: result.skill.slug,
+          version: result.skillVersion.version,
+          status: result.skill.status,
+        },
       },
-      message: "格式校验通过（持久化逻辑待实现）",
-    },
-    201,
-  );
+      201,
+    );
+  } catch (err) {
+    if (err instanceof VersionConflictError) {
+      return c.json({ error: err.message }, 409);
+    }
+    console.error("发布失败：", err);
+    return c.json({ error: "服务器内部错误" }, 500);
+  }
 });
 
 export default app;
