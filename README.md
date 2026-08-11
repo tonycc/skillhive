@@ -30,7 +30,7 @@ IT 部门（发布者）                     全体员工（消费者）
 |---|---|
 | `apps/registry` | 核心注册中心 API（Hono + Drizzle + PostgreSQL） |
 | `apps/mcp-server` | MCP 协议服务，向 Agent 客户端暴露 skill |
-| `apps/console` | Web 控制台（Next.js），面向全体员工的技能市场 |
+| `apps/console` | Web 控制台（Vue 3 + Vite + Element Plus），面向全体员工的技能市场 |
 | `apps/cli` | `skillhive` 命令行工具，IT 发布 skill 使用 |
 | `packages/db` | Drizzle schema 与数据库客户端 |
 | `packages/skill-schema` | SKILL.md 格式的解析与校验（Zod） |
