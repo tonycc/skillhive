@@ -42,3 +42,46 @@ export function reportEvent(slug: string, event: "view" | "favorite" | "rate"): 
     body: JSON.stringify({ event, client: "console" }),
   }).catch(() => {});
 }
+
+// ---------- 数据看板 ----------
+
+export interface StatsOverview {
+  publishedSkills: number;
+  views: number;
+  invokes: number;
+  favorites: number;
+  rates: number;
+}
+
+export interface SkillStats {
+  slug: string;
+  name: string;
+  category: string;
+  views: number;
+  invokes: number;
+  favorites: number;
+  rates: number;
+}
+
+export interface TrendPoint {
+  day: string;
+  views: number;
+  invokes: number;
+  favorites: number;
+  rates: number;
+}
+
+export async function fetchStatsOverview(): Promise<StatsOverview> {
+  const json = await get<{ data: StatsOverview }>("/api/stats/overview");
+  return json.data;
+}
+
+export async function fetchSkillStats(): Promise<SkillStats[]> {
+  const json = await get<{ data: SkillStats[] }>("/api/stats/skills");
+  return json.data;
+}
+
+export async function fetchTrend(days = 14): Promise<TrendPoint[]> {
+  const json = await get<{ data: TrendPoint[] }>(`/api/stats/trend?days=${days}`);
+  return json.data;
+}

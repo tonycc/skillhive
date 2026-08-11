@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from "vue-router";
 import HomeView from "./views/HomeView.vue";
 import SkillDetailView from "./views/SkillDetailView.vue";
+import StatsView from "./views/StatsView.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -12,5 +13,6 @@ export const router = createRouter({
       component: SkillDetailView,
       props: true,
     },
+    { path: "/stats", name: "stats", component: StatsView },
   ],
 });

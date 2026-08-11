@@ -97,6 +97,80 @@ body {
   font-size: 14px;
 }
 
+/* ---- 顶部导航 ---- */
+
+.site-nav {
+  display: flex;
+  gap: 16px;
+}
+
+.site-nav a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 14px;
+  padding-bottom: 2px;
+}
+
+.site-nav a.active {
+  color: var(--text);
+  font-weight: 600;
+  border-bottom: 2px solid #f7b500;
+}
+
+/* ---- 数据看板 ---- */
+
+.stat-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.stat-label {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.trend-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 140px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 16px 8px;
+}
+
+.trend-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+}
+
+.trend-bar {
+  width: 60%;
+  min-height: 2px;
+  background: #f7b500;
+  border-radius: 3px 3px 0 0;
+}
+
+.trend-day {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
 .markdown-body {
   background: #fff;
   border: 1px solid var(--border);
