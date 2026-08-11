@@ -27,7 +27,7 @@ app.get("/health", (_req, res) => {
 // ---------- 新版 Streamable HTTP（无状态） ----------
 
 app.all("/mcp", async (req, res) => {
-  const server = createServer();
+  const server = await createServer();
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
   });
@@ -53,7 +53,7 @@ app.get("/sse", async (req, res) => {
     sseTransports.delete(transport.sessionId);
   });
 
-  const server = createServer();
+  const server = await createServer();
   await server.connect(transport);
 });
 

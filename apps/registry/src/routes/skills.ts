@@ -7,6 +7,7 @@ import {
   skillVersions,
   departments,
   skillDepartmentVisibility,
+  usageEvents,
 } from "@skillhive/db";
 import { and, eq, desc, inArray } from "drizzle-orm";
 import { parseSkillMd } from "@skillhive/skill-schema";
@@ -66,17 +67,51 @@ app.get("/:slug", async (c) => {
     .innerJoin(departments, eq(skillDepartmentVisibility.departmentId, departments.id))
     .where(eq(skillDepartmentVisibility.skillId, skill.id));
 
-  // TODO: 上报 view 埋点、聚合调用量与评分
+  // 剥除 frontmatter，仅保留 Markdown 正文（供 Console 渲染 / MCP prompt 使用）
+  let body = "";
+  if (latest) {
+    try {
+      body = parseSkillMd(latest.content).body;
+    } catch {
+      body = latest.content;
+    }
+  }
 
   return c.json({
     data: {
       ...skill,
       latestVersion: latest
-        ? { version: latest.version, content: latest.content, changelog: latest.changelog }
+        ? {
+            version: latest.version,
+            content: latest.content,
+            changelog: latest.changelog,
+            body,
+          }
         : null,
       visibleDepartments: visibility.map((v) => v.name),
     },
   });
+});
+
+const eventSchema = z.object({
+  /** 事件类型：view 浏览 / invoke 调用 / favorite 收藏 / rate 评分 */
+  event: z.enum(["view", "invoke", "favorite", "rate"]),
+  /** 评分事件的分值（1-5） */
+  score: z.string().max(8).optional(),
+  /** 来源客户端，如 workbuddy / console / cli */
+  client: z.string().max(64).default("unknown"),
+});
+
+/** POST /api/skills/:slug/events — 埋点上报（MCP Server / Console 调用） */
+app.post("/:slug/events", zValidator("json", eventSchema), async (c) => {
+  const slug = c.req.param("slug");
+  const skill = await db.query.skills.findFirst({ where: eq(skills.slug, slug) });
+  if (!skill) return c.json({ error: `skill "${slug}" 不存在` }, 404);
+
+  const { event, score, client } = c.req.valid("json");
+  // TODO: 接入鉴权后记录 userId
+  await db.insert(usageEvents).values({ skillId: skill.id, event, score, client });
+  return c.json({ ok: true }, 201);
 });
 
 const publishSchema = z.object({
