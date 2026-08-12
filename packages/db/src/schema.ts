@@ -4,6 +4,7 @@ import {
   uuid,
   varchar,
   text,
+  integer,
   timestamp,
   primaryKey,
   index,
@@ -88,6 +89,25 @@ export const skillVersions = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("skill_versions_skill_idx").on(t.skillId)],
+);
+
+/** 技能包资源文件（scripts/ references/ assets/），随版本不可变存储 */
+export const skillVersionFiles = pgTable(
+  "skill_version_files",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    versionId: uuid("version_id")
+      .notNull()
+      .references(() => skillVersions.id, { onDelete: "cascade" }),
+    /** 相对技能包根目录的路径，如 references/policy.md */
+    path: varchar("path", { length: 512 }).notNull(),
+    /** base64 编码内容（文本与二进制统一存储） */
+    contentBase64: text("content_base64").notNull(),
+    /** 原始字节数（解码前） */
+    size: integer("size").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("skill_version_files_version_idx").on(t.versionId)],
 );
 
 /** 部门级可见性（空表记录 = 全员可见） */

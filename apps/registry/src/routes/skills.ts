@@ -5,12 +5,13 @@ import {
   db,
   skills,
   skillVersions,
+  skillVersionFiles,
   departments,
   skillDepartmentVisibility,
   usageEvents,
 } from "@skillhive/db";
 import { and, eq, desc, inArray } from "drizzle-orm";
-import { parseSkillMd } from "@skillhive/skill-schema";
+import { parseSkillMd, validateResourceFiles } from "@skillhive/skill-schema";
 import { requirePublishToken } from "../auth.js";
 
 /** 版本冲突时抛出，用于在事务外映射为 409 */
@@ -80,6 +81,18 @@ app.get("/:slug", async (c) => {
     .orderBy(desc(skillVersions.createdAt))
     .limit(1);
 
+  // 最新版本的资源文件（scripts/ references/ assets/）
+  const files = latest
+    ? await db
+        .select({
+          path: skillVersionFiles.path,
+          contentBase64: skillVersionFiles.contentBase64,
+          size: skillVersionFiles.size,
+        })
+        .from(skillVersionFiles)
+        .where(eq(skillVersionFiles.versionId, latest.id))
+    : [];
+
   // 可见部门（空数组 = 全员可见）
   const visibility = await db
     .select({ name: departments.name })
@@ -107,6 +120,7 @@ app.get("/:slug", async (c) => {
             changelog: latest.changelog,
             body,
             publishedAt: latest.createdAt,
+            files,
           }
         : null,
       visibleDepartments: visibility.map((v) => v.name),
@@ -139,18 +153,24 @@ const publishSchema = z.object({
   /** SKILL.md 全文（含 frontmatter） */
   content: z.string().min(1),
   changelog: z.string().default(""),
+  /** 技能包资源文件（scripts/ references/ assets/），base64 编码 */
+  files: z
+    .array(z.object({ path: z.string(), contentBase64: z.string() }))
+    .max(20)
+    .default([]),
 });
 
 // TODO: 正式版鉴权并入统一登录模块，publisher/admin 角色校验，ownerId/publishedBy 取当前用户
 
 /** POST /api/skills/publish — IT 发布新版本（CLI 调用此接口，需发布令牌） */
 app.post("/publish", requirePublishToken, zValidator("json", publishSchema), async (c) => {
-  const { content, changelog } = c.req.valid("json");
+  const { content, changelog, files } = c.req.valid("json");
 
   // 1. 校验 SKILL.md 格式
   let parsed;
   try {
     parsed = parseSkillMd(content);
+    validateResourceFiles(files);
   } catch (err) {
     return c.json({ error: (err as Error).message }, 400);
   }
@@ -196,6 +216,18 @@ app.post("/publish", requirePublishToken, zValidator("json", publishSchema), asy
         .insert(skillVersions)
         .values({ skillId: skill.id, version, content, changelog })
         .returning();
+
+      // 5.1 写入技能包资源文件（如有）
+      if (files.length > 0) {
+        await tx.insert(skillVersionFiles).values(
+          files.map((f) => ({
+            versionId: skillVersion.id,
+            path: f.path,
+            contentBase64: f.contentBase64,
+            size: Math.ceil((f.contentBase64.length * 3) / 4),
+          })),
+        );
+      }
 
       // 6. 更新部门可见性：缺省 = 全员可见（清空限制）
       await tx

@@ -1,9 +1,14 @@
 #!/usr/bin/env tsx
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { Command } from "commander";
-import { parseSkillMd } from "@skillhive/skill-schema";
+import {
+  parseSkillMd,
+  validateResourceFiles,
+  RESOURCE_DIRS,
+  type SkillResourceFile,
+} from "@skillhive/skill-schema";
 
 const REGISTRY_URL = process.env.SKILLHIVE_REGISTRY_URL ?? "http://localhost:3001";
 
@@ -29,18 +34,55 @@ program
     }
   });
 
+/** 收集技能包目录下的资源文件（scripts/ references/ assets/），内容 base64 编码 */
+async function collectResourceFiles(dir: string): Promise<SkillResourceFile[]> {
+  const files: SkillResourceFile[] = [];
+  for (const sub of RESOURCE_DIRS) {
+    const entries = await readdir(join(dir, sub), {
+      recursive: true,
+      withFileTypes: true,
+    }).catch(() => []);
+    for (const e of entries) {
+      if (!e.isFile()) continue;
+      const full = join(e.parentPath, e.name);
+      const rel = relative(dir, full).split(sep).join("/");
+      const buf = await readFile(full);
+      files.push({ path: rel, contentBase64: buf.toString("base64") });
+    }
+  }
+  return files;
+}
+
 program
   .command("publish")
-  .description("发布 skill 到 SkillHive Registry")
-  .argument("<path>", "SKILL.md 文件路径")
+  .description("发布 skill 到 SkillHive Registry（支持单个 SKILL.md 或完整技能包目录）")
+  .argument("<path>", "SKILL.md 文件路径，或含 SKILL.md + scripts/references/assets 的技能包目录")
   .option("--changelog <text>", "本次变更说明", "")
   .option("--token <token>", "发布令牌（缺省读 SKILLHIVE_TOKEN 环境变量）")
   .action(async (path: string, opts: { changelog: string; token?: string }) => {
-    const content = await readFile(path, "utf-8");
+    const target = await stat(path).catch(() => null);
+    if (!target) {
+      console.error(`路径不存在：${path}`);
+      process.exit(1);
+    }
+
+    // 目录 = 完整技能包；文件 = 仅 SKILL.md
+    let content: string;
+    let files: SkillResourceFile[] = [];
+    if (target.isDirectory()) {
+      content = await readFile(join(path, "SKILL.md"), "utf-8").catch(() => {
+        console.error(`技能包目录缺少 SKILL.md：${path}`);
+        process.exit(1);
+      });
+      files = await collectResourceFiles(path);
+    } else {
+      content = await readFile(path, "utf-8");
+    }
 
     // 本地先校验，避免无效请求
     try {
       parseSkillMd(content);
+      validateResourceFiles(files);
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);
@@ -53,7 +95,7 @@ program
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ content, changelog: opts.changelog }),
+      body: JSON.stringify({ content, changelog: opts.changelog, files }),
     });
     const json = await res.json();
 
@@ -62,6 +104,7 @@ program
       process.exit(1);
     }
     console.log("✓ 发布成功：", JSON.stringify((json as { data: unknown }).data));
+    if (files.length > 0) console.log(`  含 ${files.length} 个资源文件`);
   });
 
 // TODO: install 命令 —— 将 skill 同步到本地 .claude/skills 等目录（二期）
@@ -78,6 +121,7 @@ interface SkillDetailResp {
       version: string;
       content: string;
       publishedAt?: string;
+      files?: SkillResourceFile[];
     } | null;
   };
 }
@@ -96,23 +140,30 @@ interface SkillMeta {
   publishedAt?: number | undefined;
   source: "skillhive";
   iconUrl?: string | undefined;
+  /** 本工具同步的资源文件路径清单，用于下架/精简时清理本地多余文件 */
+  files?: string[] | undefined;
 }
 
 /**
- * 同步单个 skill 的元数据与图标（SKILL.md 无变化时也会执行，保证元数据完整）：
- * - _meta.json：内容变化才覆写
+ * 同步单个 skill 的元数据、图标与资源文件（SKILL.md 无变化时也会执行，保证完整）：
+ * - _meta.json：内容变化才覆写（含资源文件清单）
  * - _icon.png：iconUrl 变化或本地缺失时重新下载；平台移除 icon 时删除本地图标
+ * - 资源文件（scripts/ references/ assets/）：内容不一致才覆写，平台移除的本地同步删除
  * 图标下载失败仅告警，不中断整体同步。
  */
-async function syncSkillMeta(dir: string, meta: SkillMeta): Promise<void> {
+async function syncSkillMeta(
+  dir: string,
+  meta: SkillMeta,
+  resources: SkillResourceFile[],
+): Promise<void> {
   await mkdir(dir, { recursive: true });
 
   const metaPath = join(dir, META_FILE);
   const prevRaw = await readFile(metaPath, "utf-8").catch(() => null);
-  let prevIconUrl: string | undefined;
+  let prev: Partial<SkillMeta> = {};
   if (prevRaw) {
     try {
-      prevIconUrl = (JSON.parse(prevRaw) as Partial<SkillMeta>).iconUrl;
+      prev = JSON.parse(prevRaw) as Partial<SkillMeta>;
     } catch {
       // 损坏的 _meta.json 后面会被覆写
     }
@@ -121,7 +172,7 @@ async function syncSkillMeta(dir: string, meta: SkillMeta): Promise<void> {
   const iconPath = join(dir, ICON_FILE);
   if (meta.iconUrl) {
     const iconExists = (await readFile(iconPath).catch(() => null)) !== null;
-    if (!iconExists || prevIconUrl !== meta.iconUrl) {
+    if (!iconExists || prev.iconUrl !== meta.iconUrl) {
       try {
         const res = await fetch(meta.iconUrl);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -138,6 +189,29 @@ async function syncSkillMeta(dir: string, meta: SkillMeta): Promise<void> {
     await rm(iconPath, { force: true });
   }
 
+  // 资源文件：增量覆写 + 清理已移除
+  const nextPaths = new Set(resources.map((r) => r.path));
+  for (const r of resources) {
+    const fp = join(dir, r.path);
+    const local = await readFile(fp).catch(() => null);
+    if (local === null || local.toString("base64") !== r.contentBase64) {
+      await mkdir(dirname(fp), { recursive: true });
+      await writeFile(fp, Buffer.from(r.contentBase64, "base64"));
+      console.log(`  ⭑ 资源文件 ${meta.slug}/${r.path}`);
+    }
+  }
+  for (const p of prev.files ?? []) {
+    if (!nextPaths.has(p)) {
+      await rm(join(dir, p), { force: true });
+      console.log(`  - 移除资源文件 ${meta.slug}/${p}`);
+    }
+  }
+  // 清理空资源目录（目录非空时 rmdir 报错，忽略即可）
+  for (const sub of RESOURCE_DIRS) {
+    await rmdir(join(dir, sub)).catch(() => {});
+  }
+
+  meta.files = resources.map((r) => r.path);
   const next = JSON.stringify(meta, null, 2) + "\n";
   if (prevRaw !== next) {
     await writeFile(metaPath, next, "utf-8");
@@ -200,16 +274,20 @@ program
         stats.unchanged++;
       }
 
-      // 同步元数据与图标（对齐 WorkBuddy 技能包格式，SKILL.md 无变化也会补齐）
-      await syncSkillMeta(skillDir, {
-        slug: item.slug,
-        version: version.version,
-        source: "skillhive",
-        publishedAt: version.publishedAt
-          ? new Date(version.publishedAt).getTime()
-          : undefined,
-        iconUrl: detail.iconUrl ?? undefined,
-      });
+      // 同步元数据、图标与资源文件（对齐 WorkBuddy 技能包格式，SKILL.md 无变化也会补齐）
+      await syncSkillMeta(
+        skillDir,
+        {
+          slug: item.slug,
+          version: version.version,
+          source: "skillhive",
+          publishedAt: version.publishedAt
+            ? new Date(version.publishedAt).getTime()
+            : undefined,
+          iconUrl: detail.iconUrl ?? undefined,
+        },
+        version.files ?? [],
+      );
     }
 
     // 3. 下架清理：仅移除「上次由本工具同步、且平台已下架」的 skill

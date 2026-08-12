@@ -70,3 +70,62 @@ export function parseSkillMd(content: string): ParsedSkill {
 
   return { frontmatter: result.data, body: body.trim() };
 }
+
+// ---------- 多文件技能包（scripts/ references/ assets/） ----------
+
+/** 技能包允许的资源目录（对齐 WorkBuddy/Claude 技能规范） */
+export const RESOURCE_DIRS = ["scripts", "references", "assets"] as const;
+
+/** 单个资源文件大小上限（解码前原始字节） */
+export const RESOURCE_FILE_MAX_BYTES = 512 * 1024;
+
+/** 单个技能包资源文件数量上限 */
+export const RESOURCE_FILE_MAX_COUNT = 20;
+
+/** 技能包资源文件（传输与存储统一使用 base64，兼容文本与二进制） */
+export interface SkillResourceFile {
+  /** 相对技能包根目录的路径，如 references/policy.md */
+  path: string;
+  /** base64 编码的文件内容 */
+  contentBase64: string;
+}
+
+/** 校验单个资源文件路径，合法返回 null，否则返回中文错误说明 */
+export function validateResourcePath(path: string): string | null {
+  if (!path || path.length > 512) return "资源文件路径为空或超过 512 字符";
+  if (path.includes("\\")) return `路径必须使用 / 分隔符：${path}`;
+  if (path.startsWith("/") || /^[a-zA-Z]:/.test(path)) return `不允许绝对路径：${path}`;
+  const segments = path.split("/");
+  if (segments.some((s) => s === ".." || s === "." || s === "")) {
+    return `路径含非法片段（.. / . / 空段）：${path}`;
+  }
+  const topDir = segments[0] ?? "";
+  if (segments.length < 2 || !(RESOURCE_DIRS as readonly string[]).includes(topDir)) {
+    return `资源文件必须位于 ${RESOURCE_DIRS.join("/")} 目录下：${path}`;
+  }
+  return null;
+}
+
+/** 校验整包资源文件（路径合法 + 去重 + 数量/大小/编码限制），不合法抛出中文错误 */
+export function validateResourceFiles(files: SkillResourceFile[]): void {
+  if (files.length > RESOURCE_FILE_MAX_COUNT) {
+    throw new Error(`资源文件数量超过上限（${RESOURCE_FILE_MAX_COUNT} 个）：当前 ${files.length} 个`);
+  }
+  const seen = new Set<string>();
+  for (const f of files) {
+    const pathErr = validateResourcePath(f.path);
+    if (pathErr) throw new Error(pathErr);
+    if (seen.has(f.path)) throw new Error(`资源文件路径重复：${f.path}`);
+    seen.add(f.path);
+    if (!/^[A-Za-z0-9+/=\r\n]*$/.test(f.contentBase64)) {
+      throw new Error(`资源文件不是合法 base64：${f.path}`);
+    }
+    // base64 长度 ≈ 原始字节 × 4/3
+    const approxBytes = Math.ceil((f.contentBase64.length * 3) / 4);
+    if (approxBytes > RESOURCE_FILE_MAX_BYTES) {
+      throw new Error(
+        `资源文件超过大小上限（${RESOURCE_FILE_MAX_BYTES / 1024}KB）：${f.path}`,
+      );
+    }
+  }
+}
