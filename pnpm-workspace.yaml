@@ -2,12 +2,12 @@ packages:
   - "apps/*"
   - "packages/*"
 
+allowBuilds:
+  esbuild: set this to true or false
+  vue-demi: set this to true or false
+
 # 允许以下依赖执行安装构建脚本（pnpm 11 默认拦截）
 onlyBuiltDependencies:
   - esbuild
   - sharp
   - vue-demi
-allowBuilds:
-  esbuild: set this to true or false
-  sharp: set this to true or false
-  vue-demi: set this to true or false
