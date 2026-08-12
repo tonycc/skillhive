@@ -19,7 +19,8 @@ export interface SkillDetail extends SkillCard {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path);
+  const res = await fetch(path, { headers: authHeaders() });
+  handleUnauthorized(res);
   if (!res.ok) throw new Error(`请求失败：${res.status}`);
   return (await res.json()) as T;
 }
@@ -58,6 +59,21 @@ export function clearAuth(): void {
   localStorage.removeItem(AUTH_KEY);
 }
 
+/** 构造带登录态的请求头（未登录为空对象） */
+function authHeaders(): Record<string, string> {
+  const auth = getAuth();
+  return auth ? { Authorization: `Bearer ${auth.token}` } : {};
+}
+
+/** 401 统一处理：清除失效登录态并跳转登录页（带上回跳地址） */
+function handleUnauthorized(res: Response): void {
+  if (res.status === 401 && location.pathname !== "/login") {
+    clearAuth();
+    const redirect = encodeURIComponent(location.pathname + location.search);
+    location.href = `/login?redirect=${redirect}`;
+  }
+}
+
 /** 邮箱 + 密码登录，成功则保存登录态并返回用户 */
 export async function login(email: string, password: string): Promise<AuthUser> {
   const res = await fetch("/api/auth/login", {
@@ -86,7 +102,7 @@ export async function publishSkill(content: string, changelog: string): Promise<
     body: JSON.stringify({ content, changelog }),
   });
   if (!res.ok) {
-    if (res.status === 401) clearAuth(); // 登录态失效，强制重新登录
+    handleUnauthorized(res); // 401 时清除登录态并跳登录页
     const json = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(json.error ?? `发布失败（${res.status}）`);
   }
@@ -96,7 +112,7 @@ export async function publishSkill(content: string, changelog: string): Promise<
 export function reportEvent(slug: string, event: "view" | "favorite" | "rate"): void {
   void fetch(`/api/skills/${slug}/events`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ event, client: "console" }),
   }).catch(() => {});
 }
@@ -183,9 +199,10 @@ export async function createRequest(input: {
 }): Promise<void> {
   const res = await fetch("/api/requests", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ ...input, voterToken: getVoterToken() }),
   });
+  handleUnauthorized(res);
   if (!res.ok) {
     const json = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(json.error ?? `提交失败（${res.status}）`);
@@ -195,9 +212,10 @@ export async function createRequest(input: {
 export async function toggleVote(id: string): Promise<{ voted: boolean; votes: number }> {
   const res = await fetch(`/api/requests/${id}/vote`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ voterToken: getVoterToken() }),
   });
+  handleUnauthorized(res);
   if (!res.ok) throw new Error(`投票失败（${res.status}）`);
   const json = (await res.json()) as { data: { voted: boolean; votes: number } };
   return json.data;

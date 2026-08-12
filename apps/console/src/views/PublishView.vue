@@ -4,7 +4,7 @@ import { useRouter } from "vue-router";
 import { ElMessage, type FormInstance, type FormRules, type UploadFile } from "element-plus";
 import { marked } from "marked";
 import { parseSkillMd } from "@skillhive/skill-schema";
-import { publishSkill, getAuth, login, clearAuth } from "../api";
+import { publishSkill, getAuth } from "../api";
 
 const router = useRouter();
 const formRef = ref<FormInstance>();
@@ -24,32 +24,12 @@ const form = reactive({
   changelog: "",
 });
 
-/** 登录态（发布需要 publisher/admin 角色） */
-const auth = ref(getAuth());
-const loginForm = reactive({ email: "", password: "" });
-const loggingIn = ref(false);
-
-async function onLogin(): Promise<void> {
-  if (!loginForm.email || !loginForm.password) {
-    ElMessage.warning("请输入邮箱和密码");
-    return;
-  }
-  loggingIn.value = true;
-  try {
-    await login(loginForm.email, loginForm.password);
-    auth.value = getAuth();
-    ElMessage.success("登录成功");
-  } catch (err) {
-    ElMessage.error((err as Error).message);
-  } finally {
-    loggingIn.value = false;
-  }
-}
-
-function onLogout(): void {
-  clearAuth();
-  auth.value = null;
-}
+/**
+ * 登录态与发布权限（路由守卫已保证到达本页时一定已登录）。
+ * 发布需要 publisher / admin 角色，member 只读。
+ */
+const auth = getAuth();
+const canPublish = auth?.user.role === "publisher" || auth?.user.role === "admin";
 
 const rules: FormRules = {
   name: [
@@ -139,27 +119,15 @@ async function onSubmit(): Promise<void> {
 </script>
 
 <template>
-  <!-- 未登录：发布页先要求 IT 账号登录 -->
-  <el-card v-if="!auth" style="max-width: 420px">
-    <h3 style="margin-top: 0">IT 发布者登录</h3>
-    <p style="margin: 0 0 16px; font-size: 13px; color: var(--text-secondary)">
-      发布技能需要 publisher / admin 角色账号，账号由管理员在服务器上创建。
-    </p>
-    <el-form label-position="top" @submit.prevent>
-      <el-form-item label="邮箱">
-        <el-input v-model="loginForm.email" placeholder="it@example.com" @keyup.enter="onLogin" />
-      </el-form-item>
-      <el-form-item label="密码">
-        <el-input
-          v-model="loginForm.password"
-          type="password"
-          show-password
-          @keyup.enter="onLogin"
-        />
-      </el-form-item>
-      <el-button type="primary" :loading="loggingIn" @click="onLogin">登录</el-button>
-    </el-form>
-  </el-card>
+  <!-- 无发布角色（member）时只提示，全局路由守卫已保证已登录 -->
+  <el-alert
+    v-if="!canPublish"
+    type="warning"
+    :closable="false"
+    title="当前账号无发布权限"
+    description="发布技能需要 publisher / admin 角色，请联系 IT 管理员开通。"
+    style="max-width: 720px"
+  />
 
   <template v-else>
   <!-- 上传已有技能包（Claude Code 等工具开发的 SKILL.md） -->
@@ -259,13 +227,6 @@ async function onSubmit(): Promise<void> {
 
     <el-form-item label="变更说明（可选）">
       <el-input v-model="form.changelog" placeholder="本次发布/修改了什么" />
-    </el-form-item>
-
-    <el-form-item>
-      <span style="margin-right: 12px; font-size: 13px; color: var(--text-secondary)">
-        当前登录：{{ auth.user.name }}（{{ auth.user.role }}）
-      </span>
-      <el-button link type="primary" @click="onLogout">退出登录</el-button>
     </el-form-item>
 
     <el-form-item>

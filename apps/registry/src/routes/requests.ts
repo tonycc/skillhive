@@ -3,12 +3,16 @@ import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db, users, skillRequests, skillRequestVotes } from "@skillhive/db";
 import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { requireAuth } from "../auth.js";
 
 const app = new Hono();
 
+// 许愿墙仅 Console 消费，要求登录（skill 内容接口因需下发员工机保持公开）
+app.use("*", requireAuth);
+
 /**
- * 将浏览器指纹令牌映射为匿名用户（无登录体系的过渡方案）。
- * TODO: 接入企业微信登录后，替换为真实用户身份。
+ * 将浏览器指纹令牌映射为匿名用户（登录态下的投票身份兜底）。
+ * TODO: 后续可将投票身份切换为登录用户。
  */
 async function resolveAnonUser(voterToken: string, name = "匿名员工") {
   const email = `anon-${voterToken}@skillhive.local`;

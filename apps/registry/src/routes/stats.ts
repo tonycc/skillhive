@@ -1,8 +1,12 @@
 import { Hono } from "hono";
 import { db, skills, usageEvents } from "@skillhive/db";
 import { count, eq, gte, sql } from "drizzle-orm";
+import { requireAuth } from "../auth.js";
 
 const app = new Hono();
+
+// 看板数据仅 Console 消费，要求登录（skill 内容接口因需下发员工机保持公开）
+app.use("*", requireAuth);
 
 interface EventCounts {
   views: number;
