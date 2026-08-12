@@ -27,19 +27,29 @@ class VersionConflictError extends Error {
 /** MCP Server 内部接口地址（发布/下架后触发 prompts/list_changed 广播） */
 const MCP_SERVER_URL = process.env.MCP_SERVER_URL ?? "http://localhost:3100";
 
+/** 服务间内部接口共享密钥（与 MCP Server 侧配置一致） */
+const INTERNAL_TOKEN = process.env.SKILLHIVE_INTERNAL_TOKEN;
+
 /**
  * 通知 MCP Server 刷新所有活跃会话的 skill prompts（fire-and-forget）。
  * 通知失败不影响发布结果——客户端下次新建连接仍会拿到最新列表。
  */
 function notifyPromptsChanged(): void {
-  void fetch(`${MCP_SERVER_URL}/internal/prompts-changed`, { method: "POST" }).catch(
-    (err) => {
+  void fetch(`${MCP_SERVER_URL}/internal/prompts-changed`, {
+    method: "POST",
+    headers: INTERNAL_TOKEN ? { "X-SkillHive-Internal-Token": INTERNAL_TOKEN } : {},
+  })
+    .then((res) => {
+      if (!res.ok) {
+        console.warn(`[skillhive] 通知 MCP Server 返回 ${res.status}（检查内部令牌配置是否一致）`);
+      }
+    })
+    .catch((err) => {
       console.warn(
         "[skillhive] 通知 MCP Server 失败（不影响本次发布）：",
         err instanceof Error ? err.message : err,
       );
-    },
-  );
+    });
 }
 
 const app = new Hono<{ Variables: { user: SessionUser } }>();

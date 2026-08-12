@@ -78,13 +78,25 @@ app.post("/messages", async (req, res) => {
 
 // ---------- 内部接口（服务间调用，不对客户端开放） ----------
 
+/** 内部接口共享密钥：Registry 调用时携带；未配置 = 开发模式放行（启动时告警） */
+const INTERNAL_TOKEN = process.env.SKILLHIVE_INTERNAL_TOKEN;
+if (!INTERNAL_TOKEN) {
+  console.warn(
+    "[skillhive] ⚠️ 未配置 SKILLHIVE_INTERNAL_TOKEN，/internal/* 接口处于无鉴权开发模式（正式部署必须配置）",
+  );
+}
+
 /**
  * POST /internal/prompts-changed —— Registry 发布/下架 skill 后调用。
  * 对所有活跃 SSE 会话增量刷新 prompt 注册表，SDK 会自动向客户端推送
  * notifications/prompts/list_changed，客户端无需断线重连即可看到最新快捷指令。
- * TODO: 正式版需加内部鉴权（共享密钥），并仅监听内网地址。
+ * 需携带 X-SkillHive-Internal-Token 头（与 SKILLHIVE_INTERNAL_TOKEN 一致）。
  */
-app.post("/internal/prompts-changed", async (_req, res) => {
+app.post("/internal/prompts-changed", async (req, res) => {
+  if (INTERNAL_TOKEN && req.headers["x-skillhive-internal-token"] !== INTERNAL_TOKEN) {
+    res.status(401).json({ error: "未授权的内部调用（缺少或错误的内部令牌）" });
+    return;
+  }
   let refreshed = 0;
   let failed = 0;
   for (const session of sseSessions.values()) {
