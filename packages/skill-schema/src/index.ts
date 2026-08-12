@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { parse as parseYaml } from "yaml";
+import JSZip from "jszip";
 
 /**
  * SKILL.md frontmatter 校验规则。
@@ -128,4 +129,67 @@ export function validateResourceFiles(files: SkillResourceFile[]): void {
       );
     }
   }
+}
+
+/** zip 技能包解析结果 */
+export interface ParsedSkillPackage {
+  /** SKILL.md 全文 */
+  content: string;
+  /** 技能元信息（frontmatter 解析结果） */
+  frontmatter: SkillFrontmatter;
+  /** 资源文件（scripts/ references/ assets/，base64） */
+  files: SkillResourceFile[];
+  /** 被忽略的非资源文件（如 README、图片散件），供界面提示 */
+  skipped: string[];
+}
+
+/**
+ * 解析 zip 格式的技能包（浏览器 / Node 通用）：
+ * - 自动剥离压缩时可能多出的一层顶层文件夹
+ * - 自动忽略 macOS 压缩产生的 __MACOSX/ 与 .DS_Store
+ * - 只收集 scripts/ references/ assets/ 下的资源文件，其余列入 skipped
+ * @throws {Error} 找不到 SKILL.md 或校验失败时抛出带中文说明的错误
+ */
+export async function parseSkillPackageZip(data: ArrayBuffer | Uint8Array): Promise<ParsedSkillPackage> {
+  const zip = await JSZip.loadAsync(data);
+  const entries = Object.values(zip.files).filter(
+    (e) =>
+      !e.dir &&
+      !e.name.startsWith("__MACOSX/") &&
+      !e.name.split("/").every((s) => s === "") &&
+      !e.name.endsWith(".DS_Store"),
+  );
+  if (entries.length === 0) throw new Error("压缩包为空");
+
+  // 剥离公共顶层目录（直接压缩文件夹时路径会多一层，如 my-skill/SKILL.md）
+  let prefix = "";
+  if (!entries.some((e) => e.name === "SKILL.md")) {
+    const top = entries[0]?.name.split("/")[0];
+    if (top && entries.every((e) => e.name.startsWith(`${top}/`))) {
+      prefix = `${top}/`;
+    }
+  }
+
+  const skillEntry = entries.find((e) => e.name === `${prefix}SKILL.md`);
+  if (!skillEntry) {
+    throw new Error("压缩包中未找到 SKILL.md（应位于技能包根目录）");
+  }
+  const content = await skillEntry.async("string");
+  const parsed = parseSkillMd(content); // 格式不合法会在这里抛错
+
+  const files: SkillResourceFile[] = [];
+  const skipped: string[] = [];
+  for (const e of entries) {
+    const rel = e.name.slice(prefix.length);
+    if (rel === "SKILL.md") continue;
+    const topDir = rel.split("/")[0] ?? "";
+    if ((RESOURCE_DIRS as readonly string[]).includes(topDir)) {
+      files.push({ path: rel, contentBase64: await e.async("base64") });
+    } else {
+      skipped.push(rel);
+    }
+  }
+  validateResourceFiles(files);
+
+  return { content, frontmatter: parsed.frontmatter, files, skipped };
 }

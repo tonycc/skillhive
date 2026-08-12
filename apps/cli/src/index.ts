@@ -6,6 +6,7 @@ import readline from "node:readline";
 import { Command } from "commander";
 import {
   parseSkillMd,
+  parseSkillPackageZip,
   validateResourceFiles,
   RESOURCE_DIRS,
   type SkillResourceFile,
@@ -161,7 +162,7 @@ async function collectResourceFiles(dir: string): Promise<SkillResourceFile[]> {
 program
   .command("publish")
   .description("发布 skill 到 SkillHive Registry（支持单个 SKILL.md 或完整技能包目录）")
-  .argument("<path>", "SKILL.md 文件路径，或含 SKILL.md + scripts/references/assets 的技能包目录")
+  .argument("<path>", "SKILL.md 文件、技能包目录，或 zip 压缩技能包")
   .option("--changelog <text>", "本次变更说明", "")
   .action(async (path: string, opts: { changelog: string }) => {
     const target = await stat(path).catch(() => null);
@@ -170,7 +171,7 @@ program
       process.exit(1);
     }
 
-    // 目录 = 完整技能包；文件 = 仅 SKILL.md
+    // 目录 = 完整技能包；.zip = 压缩技能包；其他 = 单个 SKILL.md
     let content: string;
     let files: SkillResourceFile[] = [];
     if (target.isDirectory()) {
@@ -179,6 +180,18 @@ program
         process.exit(1);
       });
       files = await collectResourceFiles(path);
+    } else if (path.toLowerCase().endsWith(".zip")) {
+      try {
+        const pkg = await parseSkillPackageZip(await readFile(path));
+        content = pkg.content;
+        files = pkg.files;
+        if (pkg.skipped.length > 0) {
+          console.warn(`⚠ 已忽略非资源文件：${pkg.skipped.join("、")}`);
+        }
+      } catch (err) {
+        console.error((err as Error).message);
+        process.exit(1);
+      }
     } else {
       content = await readFile(path, "utf-8");
     }

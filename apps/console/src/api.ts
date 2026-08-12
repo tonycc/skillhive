@@ -90,8 +90,12 @@ export async function login(email: string, password: string): Promise<AuthUser> 
   return json.data.user;
 }
 
-/** 发布 skill（组装好的 SKILL.md 全文，需登录且具备 publisher/admin 角色） */
-export async function publishSkill(content: string, changelog: string): Promise<void> {
+/** 发布 skill（SKILL.md 全文 + 可选资源文件，需登录且具备 publisher/admin 角色） */
+export async function publishSkill(
+  content: string,
+  changelog: string,
+  files: { path: string; contentBase64: string }[] = [],
+): Promise<void> {
   const auth = getAuth();
   const res = await fetch("/api/skills/publish", {
     method: "POST",
@@ -99,7 +103,7 @@ export async function publishSkill(content: string, changelog: string): Promise<
       "Content-Type": "application/json",
       ...(auth ? { Authorization: `Bearer ${auth.token}` } : {}),
     },
-    body: JSON.stringify({ content, changelog }),
+    body: JSON.stringify({ content, changelog, files }),
   });
   if (!res.ok) {
     handleUnauthorized(res); // 401 时清除登录态并跳登录页
