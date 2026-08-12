@@ -161,7 +161,7 @@ async function collectResourceFiles(dir: string): Promise<SkillResourceFile[]> {
 
 program
   .command("publish")
-  .description("发布 skill 到 SkillHive Registry（支持单个 SKILL.md 或完整技能包目录）")
+  .description("发布 skill 到 SkillHive Registry（支持单个 SKILL.md、技能包目录或 zip）")
   .argument("<path>", "SKILL.md 文件、技能包目录，或 zip 压缩技能包")
   .option("--changelog <text>", "本次变更说明", "")
   .action(async (path: string, opts: { changelog: string }) => {
@@ -364,7 +364,11 @@ program
   )
   .action(async (opts: { dir: string }) => {
     // 1. 拉取已发布 skill 列表
-    const listRes = await fetch(`${REGISTRY_URL}/api/skills`);
+    const listRes = await fetch(`${REGISTRY_URL}/api/skills`).catch(() => null);
+    if (!listRes) {
+      console.error(`无法连接 Registry（${REGISTRY_URL}），请确认服务已启动`);
+      process.exit(1);
+    }
     if (!listRes.ok) {
       console.error(`无法连接 Registry（${listRes.status}），请确认服务已启动`);
       process.exit(1);
@@ -378,10 +382,19 @@ program
 
     for (const item of list) {
       const detailRes = await fetch(`${REGISTRY_URL}/api/skills/${item.slug}`);
-      if (!detailRes.ok) continue;
+      if (detailRes.status === 404) continue; // 确认已下架，交给后续清理
+      if (!detailRes.ok) {
+        // 查询失败（临时故障）：保留本地副本，绝不能误判为下架
+        platformSlugs.push(item.slug);
+        console.warn(`  ⚠ ${item.slug} 详情查询失败（HTTP ${detailRes.status}），本次跳过并保留本地副本`);
+        continue;
+      }
       const { data: detail } = (await detailRes.json()) as SkillDetailResp;
       const version = detail.latestVersion;
-      if (!version?.content) continue;
+      if (!version?.content) {
+        platformSlugs.push(item.slug); // 同理：无版本信息时保留本地副本
+        continue;
+      }
       platformSlugs.push(item.slug);
 
       const skillDir = join(opts.dir, item.slug);
