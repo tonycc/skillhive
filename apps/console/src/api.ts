@@ -14,6 +14,8 @@ export interface SkillDetail extends SkillCard {
     version: string;
     changelog: string;
     body: string;
+    /** 技能包资源文件（scripts/ references/ assets/） */
+    files: { path: string; size: number }[];
   } | null;
   visibleDepartments: string[];
 }
