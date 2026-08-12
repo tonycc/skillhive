@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ElMessage, type FormInstance, type FormRules } from "element-plus";
+import { ElMessage, type FormInstance, type FormRules, type UploadFile } from "element-plus";
 import { marked } from "marked";
+import { parseSkillMd } from "@skillhive/skill-schema";
 import { publishSkill } from "../api";
 
 // TODO: 接入企业微信登录后，本页面应仅对 IT（publisher/admin）可见
@@ -64,6 +65,27 @@ function buildSkillMd(): string {
 }
 
 const previewHtml = ref("");
+
+/** 上传 SKILL.md 文件并解析回填表单（适用于 Claude Code 等工具开发的技能包） */
+function onFileChange(uploadFile: UploadFile): void {
+  const file = uploadFile.raw;
+  if (!file) return;
+  void file.text().then((text) => {
+    try {
+      const parsed = parseSkillMd(text);
+      form.name = parsed.frontmatter.name;
+      form.description = parsed.frontmatter.description;
+      form.version = parsed.frontmatter.version ?? "0.1.0";
+      form.category = parsed.frontmatter.category ?? "通用";
+      form.tags = parsed.frontmatter.tags ?? [];
+      form.departments = parsed.frontmatter.departments ?? [];
+      form.body = parsed.body;
+      ElMessage.success(`已解析技能「${parsed.frontmatter.name}」，请确认信息后发布`);
+    } catch (err) {
+      ElMessage.error((err as Error).message);
+    }
+  });
+}
 async function refreshPreview(): Promise<void> {
   previewHtml.value = await marked.parse(form.body || "*暂无内容*");
 }
@@ -92,6 +114,26 @@ async function onSubmit(): Promise<void> {
 </script>
 
 <template>
+  <!-- 上传已有技能包（Claude Code 等工具开发的 SKILL.md） -->
+  <el-upload
+    drag
+    :auto-upload="false"
+    :show-file-list="false"
+    accept=".md"
+    :on-change="onFileChange"
+    style="max-width: 720px; margin-bottom: 24px"
+  >
+    <div style="padding: 12px">
+      <p style="margin: 0; font-size: 15px">
+        📦 拖拽或点击上传 <strong>SKILL.md</strong> 文件
+      </p>
+      <p style="margin: 6px 0 0; font-size: 13px; color: var(--text-secondary)">
+        适用于 Claude Code 等工具开发的技能包，解析后自动填充下方表单
+        （多文件资源包暂不支持，请仅上传 SKILL.md）
+      </p>
+    </div>
+  </el-upload>
+
   <el-form
     ref="formRef"
     :model="form"
