@@ -84,13 +84,15 @@ async function onVote(r: SkillRequest): Promise<void> {
 
   <div v-else class="request-list">
     <div v-for="r in requests" :key="r.id" class="request-card">
-      <el-button
-        :type="r.votedByMe ? 'primary' : 'default'"
+      <button
         class="vote-btn"
+        :class="{ voted: r.votedByMe }"
+        :title="r.votedByMe ? '取消投票' : '投票'"
         @click="onVote(r)"
       >
-        ▲<br />{{ r.votes }}
-      </el-button>
+        <span class="vote-arrow">▲</span>
+        <span class="vote-count">{{ r.votes }}</span>
+      </button>
       <div class="request-main">
         <div>
           <strong>{{ r.title }}</strong>
