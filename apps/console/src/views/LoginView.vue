@@ -44,10 +44,10 @@ async function onSubmit(): Promise<void> {
         请使用公司账号登录，账号由 IT 管理员创建
       </p>
       <el-form label-position="top" @submit.prevent>
-        <el-form-item label="邮箱">
+        <el-form-item label="账号">
           <el-input
             v-model="form.email"
-            placeholder="you@company.com"
+            placeholder="邮箱或用户名"
             autofocus
             @keyup.enter="onSubmit"
           />

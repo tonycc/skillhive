@@ -9,7 +9,8 @@ import { issueToken, requireAuth, verifyPassword, type SessionUser } from "../au
 const app = new Hono<{ Variables: { user: SessionUser } }>();
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  /** 账号（通常是邮箱，也允许 admin 这类短用户名） */
+  email: z.string().min(1),
   password: z.string().min(1),
 });
 

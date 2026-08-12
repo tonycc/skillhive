@@ -34,9 +34,12 @@ if (!["admin", "publisher", "member"].includes(role)) {
   console.error(`非法角色：${role}（可选 admin / publisher / member）`);
   process.exit(1);
 }
-if (password.length < 8) {
-  console.error("密码长度至少 8 位");
+if (password.length < 6) {
+  console.error("密码长度至少 6 位");
   process.exit(1);
+}
+if (password.length < 8) {
+  console.warn("⚠️ 密码少于 8 位，仅建议在本地/试点环境使用，正式部署请使用强密码");
 }
 
 const passwordHash = await hashPassword(password);

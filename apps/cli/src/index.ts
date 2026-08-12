@@ -61,7 +61,7 @@ program
   .option("--email <email>", "账号邮箱")
   .option("--password <password>", "密码（不推荐，会留在 shell 历史中）")
   .action(async (opts: { email?: string; password?: string }) => {
-    const email = opts.email ?? (await promptText("邮箱："));
+    const email = opts.email ?? (await promptText("账号："));
     const password = opts.password ?? (await promptText("密码：", true));
     if (!email || !password) {
       console.error("邮箱和密码不能为空");
