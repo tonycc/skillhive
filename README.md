@@ -61,6 +61,28 @@ pnpm dev
 
 也可以按需单独启动：`pnpm dev:registry` / `pnpm dev:mcp` / `pnpm dev:console`。
 
+## 生产部署（试运营）
+
+全栈 docker-compose（postgres + registry + mcp-server + console/nginx）：
+
+```bash
+# 1. 准备配置（参考 .env.example）：数据库密码、会话密钥、内部令牌、首次启动引导的管理员账号
+cp .env.example .env && vi .env
+
+# 2. 构建并启动
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+启动后入口：
+
+| 服务 | 默认端口 | 用途 |
+|---|---|---|
+| Console | http://服务器:8080 | 员工网页入口（nginx 托管 + /api 反代） |
+| Registry | http://服务器:3001 | CLI publish / sync 直连地址（`SKILLHIVE_REGISTRY_URL`） |
+| MCP Server | http://服务器:3100 | WorkBuddy MCP 配置指向 `/sse` |
+
+registry 首次启动会自动执行数据库迁移；在 `.env` 中设置 `SKILLHIVE_ADMIN_EMAIL` / `SKILLHIVE_ADMIN_PASSWORD` 可引导创建管理员账号（验证后建议移除）。
+
 ## 许可证
 
 [MIT](./LICENSE)

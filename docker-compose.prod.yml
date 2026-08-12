@@ -1,0 +1,74 @@
+# SkillHive 生产部署（试运营）：一条命令拉起全栈
+#
+#   1. 准备 .env（参考 .env.example，至少配置 POSTGRES_PASSWORD /
+#      SKILLHIVE_SESSION_SECRET / SKILLHIVE_INTERNAL_TOKEN）
+#   2. docker compose -f docker-compose.prod.yml up -d --build
+#
+# 服务拓扑：
+#   console (8080)  → 员工入口（网页）
+#   registry (3001) → CLI publish / sync 直接访问
+#   mcp-server (3100) → WorkBuddy MCP 配置指向
+#   postgres        → 仅容器网络内部，不对外暴露
+
+name: skillhive-prod
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-skillhive}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-skillhive}
+      POSTGRES_DB: ${POSTGRES_DB:-skillhive}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  registry:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.server
+    image: skillhive-server:latest
+    command: sh deploy/entrypoint-registry.sh
+    env_file: .env
+    environment:
+      # 容器网络内地址，覆盖 .env 中的 localhost 配置
+      DATABASE_URL: postgres://${POSTGRES_USER:-skillhive}:${POSTGRES_PASSWORD:-skillhive}@postgres:5432/${POSTGRES_DB:-skillhive}
+      MCP_SERVER_URL: http://mcp-server:3100
+      REGISTRY_PORT: "3001"
+    ports:
+      - "${REGISTRY_HOST_PORT:-3001}:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mcp-server:
+    image: skillhive-server:latest
+    command: pnpm --filter @skillhive/mcp-server exec tsx src/http.ts
+    env_file: .env
+    environment:
+      SKILLHIVE_REGISTRY_URL: http://registry:3001
+      MCP_PORT: "3100"
+    ports:
+      - "${MCP_HOST_PORT:-3100}:3100"
+    depends_on:
+      - registry
+    restart: unless-stopped
+
+  console:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.console
+    ports:
+      - "${CONSOLE_HOST_PORT:-8080}:80"
+    depends_on:
+      - registry
+    restart: unless-stopped
+
+volumes:
+  pgdata:
