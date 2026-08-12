@@ -22,6 +22,24 @@ class VersionConflictError extends Error {
   }
 }
 
+/** MCP Server 内部接口地址（发布/下架后触发 prompts/list_changed 广播） */
+const MCP_SERVER_URL = process.env.MCP_SERVER_URL ?? "http://localhost:3100";
+
+/**
+ * 通知 MCP Server 刷新所有活跃会话的 skill prompts（fire-and-forget）。
+ * 通知失败不影响发布结果——客户端下次新建连接仍会拿到最新列表。
+ */
+function notifyPromptsChanged(): void {
+  void fetch(`${MCP_SERVER_URL}/internal/prompts-changed`, { method: "POST" }).catch(
+    (err) => {
+      console.warn(
+        "[skillhive] 通知 MCP Server 失败（不影响本次发布）：",
+        err instanceof Error ? err.message : err,
+      );
+    },
+  );
+}
+
 const app = new Hono();
 
 /** GET /api/skills — 技能市场列表（按更新时间倒序） */
@@ -201,6 +219,9 @@ app.post("/publish", zValidator("json", publishSchema), async (c) => {
 
       return { skill, skillVersion };
     });
+
+    // 7. 通知 MCP Server 向活跃会话推送 prompts/list_changed（失败不影响发布）
+    notifyPromptsChanged();
 
     return c.json(
       {

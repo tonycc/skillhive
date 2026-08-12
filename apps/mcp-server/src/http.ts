@@ -1,7 +1,8 @@
 import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import { createServer } from "./server.js";
+import type { McpServer, RegisteredPrompt } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { createServer, refreshSkillPrompts } from "./server.js";
 
 /**
  * 远程传输入口（对接 WorkBuddy 等 MCP 客户端），同时暴露两种协议：
@@ -27,7 +28,7 @@ app.get("/health", (_req, res) => {
 // ---------- 新版 Streamable HTTP（无状态） ----------
 
 app.all("/mcp", async (req, res) => {
-  const server = await createServer();
+  const { server } = await createServer();
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
   });
@@ -43,28 +44,59 @@ app.all("/mcp", async (req, res) => {
 
 // ---------- 经典 SSE 传输（有状态，按 sessionId 管理连接） ----------
 
-const sseTransports = new Map<string, SSEServerTransport>();
+/** 活跃 SSE 会话：transport + server 实例 + 已注册 skill prompt 句柄 */
+interface SseSession {
+  transport: SSEServerTransport;
+  server: McpServer;
+  skillPrompts: Map<string, RegisteredPrompt>;
+}
 
-app.get("/sse", async (req, res) => {
+const sseSessions = new Map<string, SseSession>();
+
+app.get("/sse", async (_req, res) => {
+  const { server, skillPrompts } = await createServer();
   const transport = new SSEServerTransport("/messages", res);
-  sseTransports.set(transport.sessionId, transport);
+  sseSessions.set(transport.sessionId, { transport, server, skillPrompts });
 
   res.on("close", () => {
-    sseTransports.delete(transport.sessionId);
+    sseSessions.delete(transport.sessionId);
+    void server.close();
   });
 
-  const server = await createServer();
   await server.connect(transport);
 });
 
 app.post("/messages", async (req, res) => {
   const sessionId = req.query.sessionId as string;
-  const transport = sseTransports.get(sessionId);
-  if (!transport) {
+  const session = sseSessions.get(sessionId);
+  if (!session) {
     res.status(400).json({ error: `未知 sessionId: ${sessionId}（连接可能已断开）` });
     return;
   }
-  await transport.handlePostMessage(req, res, req.body);
+  await session.transport.handlePostMessage(req, res, req.body);
+});
+
+// ---------- 内部接口（服务间调用，不对客户端开放） ----------
+
+/**
+ * POST /internal/prompts-changed —— Registry 发布/下架 skill 后调用。
+ * 对所有活跃 SSE 会话增量刷新 prompt 注册表，SDK 会自动向客户端推送
+ * notifications/prompts/list_changed，客户端无需断线重连即可看到最新快捷指令。
+ * TODO: 正式版需加内部鉴权（共享密钥），并仅监听内网地址。
+ */
+app.post("/internal/prompts-changed", async (_req, res) => {
+  let refreshed = 0;
+  let failed = 0;
+  for (const session of sseSessions.values()) {
+    try {
+      await refreshSkillPrompts(session.server, session.skillPrompts);
+      refreshed++;
+    } catch (err) {
+      failed++;
+      console.error("[skillhive] 刷新会话 prompts 失败：", err);
+    }
+  }
+  res.json({ ok: true, sessions: sseSessions.size, refreshed, failed });
 });
 
 const port = Number(process.env.MCP_PORT ?? 3100);
