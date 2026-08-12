@@ -19,3 +19,6 @@ out/
 
 # 数据库本地数据
 data/
+
+# 内部讨论/决策记录文档，不同步到 GitHub
+docs/internal/
