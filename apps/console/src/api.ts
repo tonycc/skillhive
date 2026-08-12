@@ -34,30 +34,59 @@ export async function fetchSkillDetail(slug: string): Promise<SkillDetail> {
   return json.data;
 }
 
-const PUBLISH_TOKEN_KEY = "skillhive-publish-token";
+// ---------- 登录态（localStorage 持久化，7 天有效） ----------
 
-/** 读取本地保存的发布令牌（IT 首次发布时填写，存 localStorage） */
-export function getPublishToken(): string {
-  return localStorage.getItem(PUBLISH_TOKEN_KEY) ?? "";
+const AUTH_KEY = "skillhive-auth";
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  role: "admin" | "publisher" | "member";
 }
 
-export function setPublishToken(token: string): void {
-  if (token) localStorage.setItem(PUBLISH_TOKEN_KEY, token);
-  else localStorage.removeItem(PUBLISH_TOKEN_KEY);
+export function getAuth(): { token: string; user: AuthUser } | null {
+  try {
+    const raw = localStorage.getItem(AUTH_KEY);
+    return raw ? (JSON.parse(raw) as { token: string; user: AuthUser }) : null;
+  } catch {
+    return null;
+  }
 }
 
-/** 发布 skill（组装好的 SKILL.md 全文，需发布令牌） */
+export function clearAuth(): void {
+  localStorage.removeItem(AUTH_KEY);
+}
+
+/** 邮箱 + 密码登录，成功则保存登录态并返回用户 */
+export async function login(email: string, password: string): Promise<AuthUser> {
+  const res = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    data?: { token: string; user: AuthUser };
+    error?: string;
+  };
+  if (!res.ok || !json.data) throw new Error(json.error ?? `登录失败（${res.status}）`);
+  localStorage.setItem(AUTH_KEY, JSON.stringify(json.data));
+  return json.data.user;
+}
+
+/** 发布 skill（组装好的 SKILL.md 全文，需登录且具备 publisher/admin 角色） */
 export async function publishSkill(content: string, changelog: string): Promise<void> {
-  const token = getPublishToken();
+  const auth = getAuth();
   const res = await fetch("/api/skills/publish", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(auth ? { Authorization: `Bearer ${auth.token}` } : {}),
     },
     body: JSON.stringify({ content, changelog }),
   });
   if (!res.ok) {
+    if (res.status === 401) clearAuth(); // 登录态失效，强制重新登录
     const json = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(json.error ?? `发布失败（${res.status}）`);
   }

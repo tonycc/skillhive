@@ -43,6 +43,8 @@ export const users = pgTable("users", {
   id: uuid("id").defaultRandom().primaryKey(),
   email: varchar("email", { length: 256 }).notNull().unique(),
   name: varchar("name", { length: 128 }).notNull(),
+  /** scrypt 密码哈希（scrypt:salt:hash，base64）；为 null 的账号不可登录 */
+  passwordHash: varchar("password_hash", { length: 256 }),
   role: userRoleEnum("role").notNull().default("member"),
   departmentId: uuid("department_id").references(() => departments.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

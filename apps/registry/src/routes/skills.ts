@@ -12,7 +12,7 @@ import {
 } from "@skillhive/db";
 import { and, eq, desc, inArray } from "drizzle-orm";
 import { parseSkillMd, validateResourceFiles } from "@skillhive/skill-schema";
-import { requirePublishToken } from "../auth.js";
+import { requirePublisher, type SessionUser } from "../auth.js";
 
 /** 版本冲突时抛出，用于在事务外映射为 409 */
 class VersionConflictError extends Error {
@@ -42,7 +42,7 @@ function notifyPromptsChanged(): void {
   );
 }
 
-const app = new Hono();
+const app = new Hono<{ Variables: { user: SessionUser } }>();
 
 /** GET /api/skills — 技能市场列表（按更新时间倒序） */
 app.get("/", async (c) => {
@@ -160,10 +160,9 @@ const publishSchema = z.object({
     .default([]),
 });
 
-// TODO: 正式版鉴权并入统一登录模块，publisher/admin 角色校验，ownerId/publishedBy 取当前用户
-
-/** POST /api/skills/publish — IT 发布新版本（CLI 调用此接口，需发布令牌） */
-app.post("/publish", requirePublishToken, zValidator("json", publishSchema), async (c) => {
+/** POST /api/skills/publish — IT 发布新版本（需登录且具备 publisher/admin 角色） */
+app.post("/publish", requirePublisher, zValidator("json", publishSchema), async (c) => {
+  const publisher = c.get("user");
   const { content, changelog, files } = c.req.valid("json");
 
   // 1. 校验 SKILL.md 格式
@@ -190,6 +189,7 @@ app.post("/publish", requirePublishToken, zValidator("json", publishSchema), asy
           category: parsed.frontmatter.category ?? "通用",
           status: "published",
           iconUrl: parsed.frontmatter.icon ?? null,
+          ownerId: publisher.id,
         })
         .onConflictDoUpdate({
           target: skills.slug,
@@ -214,7 +214,7 @@ app.post("/publish", requirePublishToken, zValidator("json", publishSchema), asy
       // 5. 写入新版本
       const [skillVersion] = await tx
         .insert(skillVersions)
-        .values({ skillId: skill.id, version, content, changelog })
+        .values({ skillId: skill.id, version, content, changelog, publishedBy: publisher.id })
         .returning();
 
       // 5.1 写入技能包资源文件（如有）

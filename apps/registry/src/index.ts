@@ -4,6 +4,7 @@ import { logger } from "hono/logger";
 import skills from "./routes/skills.js";
 import stats from "./routes/stats.js";
 import requests from "./routes/requests.js";
+import auth from "./routes/auth.js";
 
 const app = new Hono();
 
@@ -16,8 +17,7 @@ app.get("/health", (c) =>
 app.route("/api/skills", skills);
 app.route("/api/stats", stats);
 app.route("/api/requests", requests);
-
-// TODO: /api/auth（企业微信登录）
+app.route("/api/auth", auth);
 
 const port = Number(process.env.REGISTRY_PORT ?? 3001);
 

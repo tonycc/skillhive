@@ -2,6 +2,7 @@
 import { mkdir, readdir, readFile, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
+import readline from "node:readline";
 import { Command } from "commander";
 import {
   parseSkillMd,
@@ -18,6 +19,110 @@ program
   .name("skillhive")
   .description("SkillHive 命令行工具 —— IT 发布与管理企业 AI skill")
   .version("0.1.0");
+
+// ---------- 登录凭证（~/.skillhive/credentials.json） ----------
+
+const CREDENTIALS_FILE = join(homedir(), ".skillhive", "credentials.json");
+
+interface Credentials {
+  token: string;
+  user: { id: string; email: string; name: string; role: string };
+  savedAt: string;
+}
+
+async function readCredentials(): Promise<Credentials | null> {
+  try {
+    return JSON.parse(await readFile(CREDENTIALS_FILE, "utf-8")) as Credentials;
+  } catch {
+    return null;
+  }
+}
+
+/** 交互式输入；hidden 时关闭回显（用于密码） */
+function promptText(question: string, hidden = false): Promise<string> {
+  return new Promise((resolve) => {
+    process.stdout.write(question);
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    if (hidden) {
+      // 静默输出，避免密码回显
+      (rl as unknown as { _writeToOutput: (s: string) => void })._writeToOutput = () => {};
+    }
+    rl.question("", (answer) => {
+      rl.close();
+      if (hidden) process.stdout.write("\n");
+      resolve(answer.trim());
+    });
+  });
+}
+
+program
+  .command("login")
+  .description("登录 SkillHive 账号（发布前执行一次，凭证保存到 ~/.skillhive/）")
+  .option("--email <email>", "账号邮箱")
+  .option("--password <password>", "密码（不推荐，会留在 shell 历史中）")
+  .action(async (opts: { email?: string; password?: string }) => {
+    const email = opts.email ?? (await promptText("邮箱："));
+    const password = opts.password ?? (await promptText("密码：", true));
+    if (!email || !password) {
+      console.error("邮箱和密码不能为空");
+      process.exit(1);
+    }
+
+    const res = await fetch(`${REGISTRY_URL}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const json = (await res.json()) as {
+      data?: { token: string; user: Credentials["user"] };
+      error?: string;
+    };
+    if (!res.ok || !json.data) {
+      console.error(`登录失败：${json.error ?? res.statusText}`);
+      process.exit(1);
+    }
+
+    await mkdir(dirname(CREDENTIALS_FILE), { recursive: true });
+    await writeFile(
+      CREDENTIALS_FILE,
+      JSON.stringify(
+        { token: json.data.token, user: json.data.user, savedAt: new Date().toISOString() },
+        null,
+        2,
+      ) + "\n",
+      { mode: 0o600 },
+    );
+    const u = json.data.user;
+    console.log(`✓ 已登录：${u.name}（${u.email}，${u.role}），凭证有效期 7 天`);
+  });
+
+program
+  .command("logout")
+  .description("退出登录（删除本地凭证）")
+  .action(async () => {
+    await rm(CREDENTIALS_FILE, { force: true });
+    console.log("✓ 已退出登录");
+  });
+
+program
+  .command("whoami")
+  .description("查看当前登录状态")
+  .action(async () => {
+    const cred = await readCredentials();
+    if (!cred) {
+      console.log("未登录（执行 skillhive login 登录）");
+      return;
+    }
+    const res = await fetch(`${REGISTRY_URL}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${cred.token}` },
+    });
+    if (!res.ok) {
+      console.log("登录已过期，请重新执行 skillhive login");
+      return;
+    }
+    const u = cred.user;
+    console.log(`已登录：${u.name}（${u.email}，${u.role}）`);
+  });
 
 program
   .command("validate")
@@ -58,8 +163,7 @@ program
   .description("发布 skill 到 SkillHive Registry（支持单个 SKILL.md 或完整技能包目录）")
   .argument("<path>", "SKILL.md 文件路径，或含 SKILL.md + scripts/references/assets 的技能包目录")
   .option("--changelog <text>", "本次变更说明", "")
-  .option("--token <token>", "发布令牌（缺省读 SKILLHIVE_TOKEN 环境变量）")
-  .action(async (path: string, opts: { changelog: string; token?: string }) => {
+  .action(async (path: string, opts: { changelog: string }) => {
     const target = await stat(path).catch(() => null);
     if (!target) {
       console.error(`路径不存在：${path}`);
@@ -88,17 +192,27 @@ program
       process.exit(1);
     }
 
-    const token = opts.token ?? process.env.SKILLHIVE_TOKEN;
+    // 登录凭证（skillhive login 获得）
+    const cred = await readCredentials();
+    if (!cred) {
+      console.error("未登录：请先执行 skillhive login");
+      process.exit(1);
+    }
+
     const res = await fetch(`${REGISTRY_URL}/api/skills/publish`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        Authorization: `Bearer ${cred.token}`,
       },
       body: JSON.stringify({ content, changelog: opts.changelog, files }),
     });
     const json = await res.json();
 
+    if (res.status === 401) {
+      console.error("登录已过期，请重新执行 skillhive login");
+      process.exit(1);
+    }
     if (!res.ok) {
       console.error(`发布失败：${(json as { error?: string }).error ?? res.statusText}`);
       process.exit(1);

@@ -4,9 +4,7 @@ import { useRouter } from "vue-router";
 import { ElMessage, type FormInstance, type FormRules, type UploadFile } from "element-plus";
 import { marked } from "marked";
 import { parseSkillMd } from "@skillhive/skill-schema";
-import { publishSkill, getPublishToken, setPublishToken } from "../api";
-
-// TODO: 接入统一登录模块后，本页面应仅对 IT（publisher/admin）可见，令牌由登录态替代
+import { publishSkill, getAuth, login, clearAuth } from "../api";
 
 const router = useRouter();
 const formRef = ref<FormInstance>();
@@ -26,8 +24,32 @@ const form = reactive({
   changelog: "",
 });
 
-/** 发布令牌（本地持久化，后续由统一登录模块替代） */
-const publishToken = ref(getPublishToken());
+/** 登录态（发布需要 publisher/admin 角色） */
+const auth = ref(getAuth());
+const loginForm = reactive({ email: "", password: "" });
+const loggingIn = ref(false);
+
+async function onLogin(): Promise<void> {
+  if (!loginForm.email || !loginForm.password) {
+    ElMessage.warning("请输入邮箱和密码");
+    return;
+  }
+  loggingIn.value = true;
+  try {
+    await login(loginForm.email, loginForm.password);
+    auth.value = getAuth();
+    ElMessage.success("登录成功");
+  } catch (err) {
+    ElMessage.error((err as Error).message);
+  } finally {
+    loggingIn.value = false;
+  }
+}
+
+function onLogout(): void {
+  clearAuth();
+  auth.value = null;
+}
 
 const rules: FormRules = {
   name: [
@@ -104,7 +126,6 @@ async function onSubmit(): Promise<void> {
 
   submitting.value = true;
   try {
-    setPublishToken(publishToken.value.trim());
     await publishSkill(buildSkillMd(), form.changelog);
     ElMessage.success(`技能「${form.name}」发布成功`);
     router.push(`/skills/${form.name}`);
@@ -118,6 +139,29 @@ async function onSubmit(): Promise<void> {
 </script>
 
 <template>
+  <!-- 未登录：发布页先要求 IT 账号登录 -->
+  <el-card v-if="!auth" style="max-width: 420px">
+    <h3 style="margin-top: 0">IT 发布者登录</h3>
+    <p style="margin: 0 0 16px; font-size: 13px; color: var(--text-secondary)">
+      发布技能需要 publisher / admin 角色账号，账号由管理员在服务器上创建。
+    </p>
+    <el-form label-position="top" @submit.prevent>
+      <el-form-item label="邮箱">
+        <el-input v-model="loginForm.email" placeholder="it@example.com" @keyup.enter="onLogin" />
+      </el-form-item>
+      <el-form-item label="密码">
+        <el-input
+          v-model="loginForm.password"
+          type="password"
+          show-password
+          @keyup.enter="onLogin"
+        />
+      </el-form-item>
+      <el-button type="primary" :loading="loggingIn" @click="onLogin">登录</el-button>
+    </el-form>
+  </el-card>
+
+  <template v-else>
   <!-- 上传已有技能包（Claude Code 等工具开发的 SKILL.md） -->
   <el-upload
     drag
@@ -217,14 +261,11 @@ async function onSubmit(): Promise<void> {
       <el-input v-model="form.changelog" placeholder="本次发布/修改了什么" />
     </el-form-item>
 
-    <el-form-item label="发布令牌（IT 专用，首次填写后本地记住）">
-      <el-input
-        v-model="publishToken"
-        type="password"
-        show-password
-        placeholder="Registry 配置 SKILLHIVE_PUBLISH_TOKEN 后必填"
-        style="max-width: 360px"
-      />
+    <el-form-item>
+      <span style="margin-right: 12px; font-size: 13px; color: var(--text-secondary)">
+        当前登录：{{ auth.user.name }}（{{ auth.user.role }}）
+      </span>
+      <el-button link type="primary" @click="onLogout">退出登录</el-button>
     </el-form-item>
 
     <el-form-item>
@@ -234,4 +275,5 @@ async function onSubmit(): Promise<void> {
       <el-button @click="router.push('/')">取消</el-button>
     </el-form-item>
   </el-form>
+  </template>
 </template>
