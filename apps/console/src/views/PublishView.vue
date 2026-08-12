@@ -4,9 +4,9 @@ import { useRouter } from "vue-router";
 import { ElMessage, type FormInstance, type FormRules, type UploadFile } from "element-plus";
 import { marked } from "marked";
 import { parseSkillMd } from "@skillhive/skill-schema";
-import { publishSkill } from "../api";
+import { publishSkill, getPublishToken, setPublishToken } from "../api";
 
-// TODO: 接入企业微信登录后，本页面应仅对 IT（publisher/admin）可见
+// TODO: 接入统一登录模块后，本页面应仅对 IT（publisher/admin）可见，令牌由登录态替代
 
 const router = useRouter();
 const formRef = ref<FormInstance>();
@@ -25,6 +25,9 @@ const form = reactive({
   body: "",
   changelog: "",
 });
+
+/** 发布令牌（本地持久化，后续由统一登录模块替代） */
+const publishToken = ref(getPublishToken());
 
 const rules: FormRules = {
   name: [
@@ -101,6 +104,7 @@ async function onSubmit(): Promise<void> {
 
   submitting.value = true;
   try {
+    setPublishToken(publishToken.value.trim());
     await publishSkill(buildSkillMd(), form.changelog);
     ElMessage.success(`技能「${form.name}」发布成功`);
     router.push(`/skills/${form.name}`);
@@ -211,6 +215,16 @@ async function onSubmit(): Promise<void> {
 
     <el-form-item label="变更说明（可选）">
       <el-input v-model="form.changelog" placeholder="本次发布/修改了什么" />
+    </el-form-item>
+
+    <el-form-item label="发布令牌（IT 专用，首次填写后本地记住）">
+      <el-input
+        v-model="publishToken"
+        type="password"
+        show-password
+        placeholder="Registry 配置 SKILLHIVE_PUBLISH_TOKEN 后必填"
+        style="max-width: 360px"
+      />
     </el-form-item>
 
     <el-form-item>

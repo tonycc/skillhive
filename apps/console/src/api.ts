@@ -34,11 +34,27 @@ export async function fetchSkillDetail(slug: string): Promise<SkillDetail> {
   return json.data;
 }
 
-/** 发布 skill（组装好的 SKILL.md 全文） */
+const PUBLISH_TOKEN_KEY = "skillhive-publish-token";
+
+/** 读取本地保存的发布令牌（IT 首次发布时填写，存 localStorage） */
+export function getPublishToken(): string {
+  return localStorage.getItem(PUBLISH_TOKEN_KEY) ?? "";
+}
+
+export function setPublishToken(token: string): void {
+  if (token) localStorage.setItem(PUBLISH_TOKEN_KEY, token);
+  else localStorage.removeItem(PUBLISH_TOKEN_KEY);
+}
+
+/** 发布 skill（组装好的 SKILL.md 全文，需发布令牌） */
 export async function publishSkill(content: string, changelog: string): Promise<void> {
+  const token = getPublishToken();
   const res = await fetch("/api/skills/publish", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify({ content, changelog }),
   });
   if (!res.ok) {

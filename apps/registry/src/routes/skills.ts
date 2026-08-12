@@ -11,6 +11,7 @@ import {
 } from "@skillhive/db";
 import { and, eq, desc, inArray } from "drizzle-orm";
 import { parseSkillMd } from "@skillhive/skill-schema";
+import { requirePublishToken } from "../auth.js";
 
 /** 版本冲突时抛出，用于在事务外映射为 409 */
 class VersionConflictError extends Error {
@@ -140,8 +141,10 @@ const publishSchema = z.object({
   changelog: z.string().default(""),
 });
 
-/** POST /api/skills/publish — IT 发布新版本（CLI 调用此接口） */
-app.post("/publish", zValidator("json", publishSchema), async (c) => {
+// TODO: 正式版鉴权并入统一登录模块，publisher/admin 角色校验，ownerId/publishedBy 取当前用户
+
+/** POST /api/skills/publish — IT 发布新版本（CLI 调用此接口，需发布令牌） */
+app.post("/publish", requirePublishToken, zValidator("json", publishSchema), async (c) => {
   const { content, changelog } = c.req.valid("json");
 
   // 1. 校验 SKILL.md 格式
@@ -154,8 +157,6 @@ app.post("/publish", zValidator("json", publishSchema), async (c) => {
 
   const slug = parsed.frontmatter.name;
   const version = parsed.frontmatter.version ?? "0.1.0";
-
-  // TODO: 2. 鉴权 —— 仅 publisher/admin 角色可发布，ownerId/publishedBy 取当前用户
 
   try {
     const result = await db.transaction(async (tx) => {

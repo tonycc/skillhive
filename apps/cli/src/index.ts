@@ -34,7 +34,8 @@ program
   .description("发布 skill 到 SkillHive Registry")
   .argument("<path>", "SKILL.md 文件路径")
   .option("--changelog <text>", "本次变更说明", "")
-  .action(async (path: string, opts: { changelog: string }) => {
+  .option("--token <token>", "发布令牌（缺省读 SKILLHIVE_TOKEN 环境变量）")
+  .action(async (path: string, opts: { changelog: string; token?: string }) => {
     const content = await readFile(path, "utf-8");
 
     // 本地先校验，避免无效请求
@@ -45,10 +46,13 @@ program
       process.exit(1);
     }
 
-    // TODO: 携带发布者身份令牌（登录态 / API Key）
+    const token = opts.token ?? process.env.SKILLHIVE_TOKEN;
     const res = await fetch(`${REGISTRY_URL}/api/skills/publish`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify({ content, changelog: opts.changelog }),
     });
     const json = await res.json();
