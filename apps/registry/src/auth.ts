@@ -10,7 +10,7 @@ import { sign, verify } from "hono/jwt";
  * - 会话：JWT（HS256，7 天有效期），密钥取 SKILLHIVE_SESSION_SECRET；
  *   未配置时每次启动随机生成（重启即全部会话失效），正式部署必须配置
  * - 保护范围：发布/管理接口要求 publisher 或 admin 角色；
- *   读取路径（市场浏览、sync、MCP）保持公开
+ *   读取路径（市场浏览、MCP 机器通道）保持公开
  */
 
 const scryptAsync = promisify(scrypt);

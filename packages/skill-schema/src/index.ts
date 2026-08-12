@@ -29,7 +29,7 @@ export const skillFrontmatterSchema = z.object({
   category: z.string().optional(),
   /** 可见部门 slug 列表，缺省表示全员可见 */
   departments: z.array(z.string()).optional(),
-  /** 图标 URL（http/https），sync 时下载到本地技能目录供客户端 UI 展示 */
+  /** 图标 URL（http/https），供客户端展示 */
   icon: z.string().url().max(1024).optional(),
 });
 

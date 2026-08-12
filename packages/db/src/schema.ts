@@ -63,7 +63,7 @@ export const skills = pgTable(
     /** 分类，如：研发 / 市场 / 财务 / 通用 */
     category: varchar("category", { length: 64 }).notNull().default("通用"),
     status: skillStatusEnum("status").notNull().default("draft"),
-    /** 图标 URL（来自 frontmatter icon 字段），供客户端展示与 sync 下载 */
+    /** 图标 URL（来自 frontmatter icon 字段），供客户端展示 */
     iconUrl: varchar("icon_url", { length: 1024 }),
     ownerId: uuid("owner_id").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

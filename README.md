@@ -78,7 +78,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 | 服务 | 默认端口 | 用途 |
 |---|---|---|
 | Console | http://服务器:8080 | 员工网页入口（nginx 托管 + /api 反代） |
-| Registry | http://服务器:3001 | CLI publish / sync 直连地址（`SKILLHIVE_REGISTRY_URL`） |
+| Registry | http://服务器:3001 | CLI publish 直连地址（`SKILLHIVE_REGISTRY_URL`） |
 | MCP Server | http://服务器:3100 | WorkBuddy MCP 配置指向 `/sse` |
 
 registry 首次启动会自动执行数据库迁移；在 `.env` 中设置 `SKILLHIVE_ADMIN_EMAIL` / `SKILLHIVE_ADMIN_PASSWORD` 可引导创建管理员账号（验证后建议移除）。
