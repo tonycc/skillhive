@@ -1,5 +1,7 @@
 # SkillHive（技能蜂巢）
 
+[![CI](https://github.com/tonycc/skillhive/actions/workflows/ci.yml/badge.svg)](https://github.com/tonycc/skillhive/actions/workflows/ci.yml)
+
 > 企业内部 AI Skill 中枢：IT 集中开发与治理，全员通过 MCP 客户端（如腾讯 WorkBuddy）零配置使用。
 
 ## 项目背景
