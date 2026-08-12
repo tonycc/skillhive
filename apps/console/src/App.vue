@@ -12,6 +12,9 @@
         <router-link to="/publish" :class="{ active: $route.name === 'publish' }">
           发布技能
         </router-link>
+        <router-link to="/requests" :class="{ active: $route.name === 'requests' }">
+          许愿墙
+        </router-link>
       </nav>
     </header>
     <router-view />

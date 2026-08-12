@@ -98,3 +98,62 @@ export async function fetchTrend(days = 14): Promise<TrendPoint[]> {
   const json = await get<{ data: TrendPoint[] }>(`/api/stats/trend?days=${days}`);
   return json.data;
 }
+
+// ---------- 需求许愿 ----------
+
+/** 浏览器指纹令牌（无登录体系的过渡方案，存 localStorage） */
+export function getVoterToken(): string {
+  let token = localStorage.getItem("skillhive-voter");
+  if (!token) {
+    token = crypto.randomUUID();
+    localStorage.setItem("skillhive-voter", token);
+  }
+  return token;
+}
+
+export type RequestStatus = "open" | "planned" | "done" | "rejected";
+
+export interface SkillRequest {
+  id: string;
+  title: string;
+  description: string;
+  status: RequestStatus;
+  requesterName: string | null;
+  votes: number;
+  votedByMe: boolean;
+  createdAt: string;
+}
+
+export async function fetchRequests(): Promise<SkillRequest[]> {
+  const json = await get<{ data: SkillRequest[] }>(
+    `/api/requests?voterToken=${getVoterToken()}`,
+  );
+  return json.data;
+}
+
+export async function createRequest(input: {
+  title: string;
+  description: string;
+  nickname: string;
+}): Promise<void> {
+  const res = await fetch("/api/requests", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...input, voterToken: getVoterToken() }),
+  });
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(json.error ?? `提交失败（${res.status}）`);
+  }
+}
+
+export async function toggleVote(id: string): Promise<{ voted: boolean; votes: number }> {
+  const res = await fetch(`/api/requests/${id}/vote`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ voterToken: getVoterToken() }),
+  });
+  if (!res.ok) throw new Error(`投票失败（${res.status}）`);
+  const json = (await res.json()) as { data: { voted: boolean; votes: number } };
+  return json.data;
+}
