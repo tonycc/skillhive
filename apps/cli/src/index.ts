@@ -69,12 +69,76 @@ interface SkillListItem {
 interface SkillDetailResp {
   data: {
     slug: string;
-    latestVersion?: { version: string; content: string } | null;
+    iconUrl?: string | null;
+    latestVersion?: {
+      version: string;
+      content: string;
+      publishedAt?: string;
+    } | null;
   };
 }
 
 /** 同步清单：记录本工具写入过的 skill，下架清理时绝不动用户自行安装的技能 */
 const MANIFEST_FILE = ".skillhive-manifest.json";
+
+/** 落地到技能目录的元数据/图标文件名（对齐 WorkBuddy 技能包格式） */
+const META_FILE = "_meta.json";
+const ICON_FILE = "_icon.png";
+
+/** 写入技能目录的 _meta.json 结构（publishedAt 为毫秒时间戳，与 WorkBuddy 技能包约定一致） */
+interface SkillMeta {
+  slug: string;
+  version: string;
+  publishedAt?: number | undefined;
+  source: "skillhive";
+  iconUrl?: string | undefined;
+}
+
+/**
+ * 同步单个 skill 的元数据与图标（SKILL.md 无变化时也会执行，保证元数据完整）：
+ * - _meta.json：内容变化才覆写
+ * - _icon.png：iconUrl 变化或本地缺失时重新下载；平台移除 icon 时删除本地图标
+ * 图标下载失败仅告警，不中断整体同步。
+ */
+async function syncSkillMeta(dir: string, meta: SkillMeta): Promise<void> {
+  await mkdir(dir, { recursive: true });
+
+  const metaPath = join(dir, META_FILE);
+  const prevRaw = await readFile(metaPath, "utf-8").catch(() => null);
+  let prevIconUrl: string | undefined;
+  if (prevRaw) {
+    try {
+      prevIconUrl = (JSON.parse(prevRaw) as Partial<SkillMeta>).iconUrl;
+    } catch {
+      // 损坏的 _meta.json 后面会被覆写
+    }
+  }
+
+  const iconPath = join(dir, ICON_FILE);
+  if (meta.iconUrl) {
+    const iconExists = (await readFile(iconPath).catch(() => null)) !== null;
+    if (!iconExists || prevIconUrl !== meta.iconUrl) {
+      try {
+        const res = await fetch(meta.iconUrl);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        await writeFile(iconPath, Buffer.from(await res.arrayBuffer()));
+        console.log(`  ⭑ 图标已下载 ${meta.slug}`);
+      } catch (err) {
+        console.warn(
+          `  ⚠ 图标下载失败（${meta.slug}）：`,
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+  } else {
+    await rm(iconPath, { force: true });
+  }
+
+  const next = JSON.stringify(meta, null, 2) + "\n";
+  if (prevRaw !== next) {
+    await writeFile(metaPath, next, "utf-8");
+  }
+}
 
 async function readManifest(dir: string): Promise<string[]> {
   try {
@@ -115,22 +179,33 @@ program
       if (!version?.content) continue;
       platformSlugs.push(item.slug);
 
-      const filePath = join(opts.dir, item.slug, "SKILL.md");
+      const skillDir = join(opts.dir, item.slug);
+      const filePath = join(skillDir, "SKILL.md");
       const existing = await readFile(filePath, "utf-8").catch(() => null);
 
       if (existing === null) {
         stats.added++;
         console.log(`+ 新增 ${item.slug}（v${version.version}）`);
+        await mkdir(skillDir, { recursive: true });
+        await writeFile(filePath, version.content, "utf-8");
       } else if (existing !== version.content) {
         stats.updated++;
         console.log(`↑ 更新 ${item.slug}（v${version.version}）`);
+        await writeFile(filePath, version.content, "utf-8");
       } else {
         stats.unchanged++;
-        continue;
       }
 
-      await mkdir(join(opts.dir, item.slug), { recursive: true });
-      await writeFile(filePath, version.content, "utf-8");
+      // 同步元数据与图标（对齐 WorkBuddy 技能包格式，SKILL.md 无变化也会补齐）
+      await syncSkillMeta(skillDir, {
+        slug: item.slug,
+        version: version.version,
+        source: "skillhive",
+        publishedAt: version.publishedAt
+          ? new Date(version.publishedAt).getTime()
+          : undefined,
+        iconUrl: detail.iconUrl ?? undefined,
+      });
     }
 
     // 3. 下架清理：仅移除「上次由本工具同步、且平台已下架」的 skill

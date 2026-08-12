@@ -53,6 +53,7 @@ app.get("/", async (c) => {
       summary: skills.summary,
       category: skills.category,
       status: skills.status,
+      iconUrl: skills.iconUrl,
       updatedAt: skills.updatedAt,
     })
     .from(skills)
@@ -104,6 +105,7 @@ app.get("/:slug", async (c) => {
             content: latest.content,
             changelog: latest.changelog,
             body,
+            publishedAt: latest.createdAt,
           }
         : null,
       visibleDepartments: visibility.map((v) => v.name),
@@ -166,6 +168,7 @@ app.post("/publish", zValidator("json", publishSchema), async (c) => {
           summary: parsed.frontmatter.description,
           category: parsed.frontmatter.category ?? "通用",
           status: "published",
+          iconUrl: parsed.frontmatter.icon ?? null,
         })
         .onConflictDoUpdate({
           target: skills.slug,
@@ -173,6 +176,7 @@ app.post("/publish", zValidator("json", publishSchema), async (c) => {
             summary: parsed.frontmatter.description,
             category: parsed.frontmatter.category ?? "通用",
             status: "published",
+            iconUrl: parsed.frontmatter.icon ?? null,
           },
         })
         .returning();

@@ -8,6 +8,13 @@
       "when": 1786459538841,
       "tag": "0000_overjoyed_wendigo",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786518956316,
+      "tag": "0001_sloppy_leper_queen",
+      "breakpoints": true
     }
   ]
 }
