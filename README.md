@@ -61,21 +61,6 @@ pnpm dev
 
 也可以按需单独启动：`pnpm dev:registry` / `pnpm dev:mcp` / `pnpm dev:console`。
 
-## 路线图
-
-- [x] 项目骨架与数据模型
-- [x] Skill 发布 / 版本管理 / CLI（鉴权待接入）
-- [x] 数据库迁移与发布持久化闭环
-- [ ] MCP Server（tools + prompts 原语）
-- [x] Web Console 技能市场（Vue 3 + Element Plus）
-- [x] Web 端发布 skill（表单组装 / 上传 SKILL.md）
-- [x] CLI sync 增量同步到本地技能目录（WorkBuddy / 菜单分发通道）
-- [x] 数据看板（概览/趋势/技能排行）
-- [ ] 企业微信登录 + 部门级可见性
-- [ ] 调用埋点与数据看板
-- [ ] 需求许愿与投票
-- [ ] 语义搜索（Python sidecar + pgvector）
-
 ## 许可证
 
 [MIT](./LICENSE)
