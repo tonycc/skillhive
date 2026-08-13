@@ -2,7 +2,7 @@ import { McpServer, type RegisteredPrompt } from "@modelcontextprotocol/sdk/serv
 import { z } from "zod";
 import { parseSkillMd } from "@skillhive/skill-schema";
 
-const REGISTRY_URL = process.env.SKILLHIVE_REGISTRY_URL ?? "http://localhost:3001";
+export const REGISTRY_URL = process.env.SKILLHIVE_REGISTRY_URL ?? "http://localhost:3001";
 
 interface SkillListItem {
   slug: string;
@@ -16,12 +16,24 @@ interface SkillDetail {
   };
 }
 
+/** 已鉴权的调用者身份（PAT 解析结果） */
+export interface CallerIdentity {
+  id: string;
+  email: string;
+  name: string;
+}
+
 /** 埋点上报（fire-and-forget，失败不影响主流程） */
-function reportEvent(slug: string, event: "view" | "invoke", client = "mcp"): void {
+function reportEvent(
+  slug: string,
+  event: "view" | "invoke",
+  client = "mcp",
+  userId?: string,
+): void {
   void fetch(`${REGISTRY_URL}/api/skills/${slug}/events`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ event, client }),
+    body: JSON.stringify({ event, client, userId }),
   }).catch(() => {});
 }
 
@@ -59,6 +71,7 @@ async function fetchPublishedSkills(): Promise<SkillListItem[]> {
 export async function refreshSkillPrompts(
   server: McpServer,
   registered: Map<string, RegisteredPrompt>,
+  identity?: CallerIdentity,
 ): Promise<void> {
   const skills = await fetchPublishedSkills();
   const platformSlugs = new Set(skills.map((s) => s.slug));
@@ -72,7 +85,7 @@ export async function refreshSkillPrompts(
         { title: s.name, description: s.summary },
         async () => {
           const body = await loadSkillBody(s.slug);
-          reportEvent(s.slug, "invoke");
+          reportEvent(s.slug, "invoke", "mcp", identity?.id);
           return {
             messages: [
               {
@@ -117,8 +130,10 @@ export interface SkillHiveServer {
  *
  * prompts 在实例创建时从 Registry 加载；实例存活期间若平台发布/下架 skill，
  * 由 /internal/prompts-changed 触发 refreshSkillPrompts 增量刷新并通知客户端。
+ *
+ * identity 为 PAT 鉴权解析出的调用者，用于埋点归属；stdio 本地模式可为空。
  */
-export async function createServer(): Promise<SkillHiveServer> {
+export async function createServer(identity?: CallerIdentity): Promise<SkillHiveServer> {
   const server = new McpServer({
     name: "skillhive",
     version: "0.1.0",
@@ -161,7 +176,7 @@ export async function createServer(): Promise<SkillHiveServer> {
           isError: true,
         };
       }
-      reportEvent(slug, "invoke");
+      reportEvent(slug, "invoke", "mcp", identity?.id);
       return { content: [{ type: "text", text: body }] };
     },
   );
@@ -170,7 +185,7 @@ export async function createServer(): Promise<SkillHiveServer> {
 
   const skillPrompts = new Map<string, RegisteredPrompt>();
   try {
-    await refreshSkillPrompts(server, skillPrompts);
+    await refreshSkillPrompts(server, skillPrompts, identity);
   } catch (err) {
     // Registry 不可用时降级为仅提供 tools
     console.error("[skillhive] 加载 skill prompts 失败，仅提供 tools：", err);

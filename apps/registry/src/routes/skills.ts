@@ -145,6 +145,8 @@ const eventSchema = z.object({
   score: z.string().max(8).optional(),
   /** 来源客户端，如 workbuddy / console / cli */
   client: z.string().max(64).default("unknown"),
+  /** 调用者用户 ID（MCP Server 鉴权解析后携带） */
+  userId: z.string().uuid().optional(),
 });
 
 /** POST /api/skills/:slug/events — 埋点上报（MCP Server / Console 调用） */
@@ -153,9 +155,8 @@ app.post("/:slug/events", zValidator("json", eventSchema), async (c) => {
   const skill = await db.query.skills.findFirst({ where: eq(skills.slug, slug) });
   if (!skill) return c.json({ error: `skill "${slug}" 不存在` }, 404);
 
-  const { event, score, client } = c.req.valid("json");
-  // TODO: 接入鉴权后记录 userId
-  await db.insert(usageEvents).values({ skillId: skill.id, event, score, client });
+  const { event, score, client, userId } = c.req.valid("json");
+  await db.insert(usageEvents).values({ skillId: skill.id, event, score, client, userId });
   return c.json({ ok: true }, 201);
 });
 

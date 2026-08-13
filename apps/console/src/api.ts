@@ -114,6 +114,51 @@ export async function publishSkill(
   }
 }
 
+// ---------- 个人接入令牌（PAT） ----------
+
+export interface PatInfo {
+  id: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revoked: boolean;
+}
+
+/** 列出我的接入令牌 */
+export async function fetchTokens(): Promise<PatInfo[]> {
+  const json = await get<{ data: PatInfo[] }>("/api/auth/tokens");
+  return json.data;
+}
+
+/** 生成接入令牌（明文仅此一次返回） */
+export async function createToken(name: string): Promise<{ id: string; token: string }> {
+  const res = await fetch("/api/auth/tokens", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ name }),
+  });
+  handleUnauthorized(res);
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(json.error ?? `生成失败（${res.status}）`);
+  }
+  const json = (await res.json()) as { data: { id: string; token: string } };
+  return json.data;
+}
+
+/** 吊销接入令牌 */
+export async function revokeToken(id: string): Promise<void> {
+  const res = await fetch(`/api/auth/tokens/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  handleUnauthorized(res);
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(json.error ?? `吊销失败（${res.status}）`);
+  }
+}
+
 /** 埋点上报（fire-and-forget） */
 export function reportEvent(slug: string, event: "view" | "favorite" | "rate"): void {
   void fetch(`/api/skills/${slug}/events`, {

@@ -1,4 +1,4 @@
-import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+import { randomBytes, scrypt, timingSafeEqual, createHash } from "node:crypto";
 import { promisify } from "node:util";
 import type { Context, MiddlewareHandler } from "hono";
 import { sign, verify } from "hono/jwt";
@@ -110,5 +110,30 @@ export const requirePublisher: MiddlewareHandler = async (c, next) => {
     return c.json({ error: "无发布权限（需要 publisher 或 admin 角色）" }, 403);
   }
   c.set("user", user);
+  return next();
+};
+
+// ---------- 个人接入令牌（PAT，供 MCP 客户端鉴权） ----------
+
+/** PAT 明文格式：sk- + 48 位 hex（高嫡机随机，sha256 哈希存储即可） */
+export function generatePat(): { token: string; hash: string } {
+  const token = `sk-${randomBytes(24).toString("hex")}`;
+  return { token, hash: hashPat(token) };
+}
+
+export function hashPat(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+// ---------- 服务间内部接口鉴权 ----------
+
+const INTERNAL_TOKEN = process.env.SKILLHIVE_INTERNAL_TOKEN;
+
+/** 内部接口（MCP Server 调用）：校验 X-SkillHive-Internal-Token；未配置 = 开发模式放行 */
+export const requireInternalToken: MiddlewareHandler = async (c, next) => {
+  if (!INTERNAL_TOKEN) return next();
+  if (c.req.header("X-SkillHive-Internal-Token") !== INTERNAL_TOKEN) {
+    return c.json({ error: "未授权的内部调用（缺少或错误的内部令牌）" }, 401);
+  }
   return next();
 };

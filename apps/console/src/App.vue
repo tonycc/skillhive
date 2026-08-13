@@ -36,6 +36,9 @@ function onLogout(): void {
         <router-link to="/requests" :class="{ active: $route.name === 'requests' }">
           许愿墙
         </router-link>
+        <router-link to="/settings" :class="{ active: $route.name === 'settings' }">
+          接入设置
+        </router-link>
       </nav>
       <div v-if="auth" style="margin-left: auto; font-size: 13px; color: var(--text-secondary)">
         {{ auth.user.name }}（{{ auth.user.role }}）

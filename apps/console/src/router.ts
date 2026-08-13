@@ -4,6 +4,7 @@ import SkillDetailView from "./views/SkillDetailView.vue";
 import StatsView from "./views/StatsView.vue";
 import PublishView from "./views/PublishView.vue";
 import RequestsView from "./views/RequestsView.vue";
+import SettingsView from "./views/SettingsView.vue";
 import LoginView from "./views/LoginView.vue";
 import { getAuth } from "./api";
 
@@ -21,6 +22,7 @@ export const router = createRouter({
     { path: "/stats", name: "stats", component: StatsView },
     { path: "/publish", name: "publish", component: PublishView },
     { path: "/requests", name: "requests", component: RequestsView },
+    { path: "/settings", name: "settings", component: SettingsView },
   ],
 });
 

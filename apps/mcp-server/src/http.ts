@@ -2,7 +2,12 @@ import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import type { McpServer, RegisteredPrompt } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { createServer, refreshSkillPrompts } from "./server.js";
+import {
+  createServer,
+  refreshSkillPrompts,
+  REGISTRY_URL,
+  type CallerIdentity,
+} from "./server.js";
 
 /**
  * 远程传输入口（对接 WorkBuddy 等 MCP 客户端），同时暴露两种协议：
@@ -17,6 +22,39 @@ import { createServer, refreshSkillPrompts } from "./server.js";
 const app = express();
 app.use(express.json());
 
+/** 服务间内部接口的共享密钥（未配置 = 开发模式放行并告警） */
+const INTERNAL_TOKEN = process.env.SKILLHIVE_INTERNAL_TOKEN;
+if (!INTERNAL_TOKEN) {
+  console.warn(
+    "[skillhive] ⚠️ 未配置 SKILLHIVE_INTERNAL_TOKEN，/internal/* 接口处于无鉴权开发模式（正式部署必须配置）",
+  );
+}
+
+const AUTH_HINT =
+  "缺少或无效的接入令牌：请在 SkillHive Console「接入设置」生成令牌，并在 MCP 配置中加 headers: { Authorization: \"Bearer <令牌>\" }";
+
+/** 从请求头提取 Bearer PAT 并向 Registry 解析调用者身份；缺失/无效/异常均返回 null */
+async function resolveCaller(req: express.Request): Promise<CallerIdentity | null> {
+  const header = req.headers.authorization ?? "";
+  const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
+  if (!token) return null;
+  try {
+    const res = await fetch(`${REGISTRY_URL}/api/auth/resolve-pat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(INTERNAL_TOKEN ? { "X-SkillHive-Internal-Token": INTERNAL_TOKEN } : {}),
+      },
+      body: JSON.stringify({ token }),
+    });
+    if (!res.ok) return null;
+    const { data } = (await res.json()) as { data: CallerIdentity };
+    return data;
+  } catch {
+    return null;
+  }
+}
+
 app.get("/health", (_req, res) => {
   res.json({
     status: "ok",
@@ -28,7 +66,12 @@ app.get("/health", (_req, res) => {
 // ---------- 新版 Streamable HTTP（无状态） ----------
 
 app.all("/mcp", async (req, res) => {
-  const { server } = await createServer();
+  const caller = await resolveCaller(req);
+  if (!caller) {
+    res.status(401).json({ error: AUTH_HINT });
+    return;
+  }
+  const { server } = await createServer(caller);
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
   });
@@ -44,25 +87,32 @@ app.all("/mcp", async (req, res) => {
 
 // ---------- 经典 SSE 传输（有状态，按 sessionId 管理连接） ----------
 
-/** 活跃 SSE 会话：transport + server 实例 + 已注册 skill prompt 句柄 */
+/** 活跃 SSE 会话：transport + server 实例 + 已注册 skill prompt 句柄 + 调用者身份 */
 interface SseSession {
   transport: SSEServerTransport;
   server: McpServer;
   skillPrompts: Map<string, RegisteredPrompt>;
+  caller: CallerIdentity;
 }
 
 const sseSessions = new Map<string, SseSession>();
 
-app.get("/sse", async (_req, res) => {
-  const { server, skillPrompts } = await createServer();
+app.get("/sse", async (req, res) => {
+  const caller = await resolveCaller(req);
+  if (!caller) {
+    res.status(401).json({ error: AUTH_HINT });
+    return;
+  }
+  const { server, skillPrompts } = await createServer(caller);
   const transport = new SSEServerTransport("/messages", res);
-  sseSessions.set(transport.sessionId, { transport, server, skillPrompts });
+  sseSessions.set(transport.sessionId, { transport, server, skillPrompts, caller });
 
   res.on("close", () => {
     sseSessions.delete(transport.sessionId);
     void server.close();
   });
 
+  console.log(`[skillhive] SSE 会话建立：${caller.name}（${caller.email}）`);
   await server.connect(transport);
 });
 
@@ -77,14 +127,6 @@ app.post("/messages", async (req, res) => {
 });
 
 // ---------- 内部接口（服务间调用，不对客户端开放） ----------
-
-/** 内部接口共享密钥：Registry 调用时携带；未配置 = 开发模式放行（启动时告警） */
-const INTERNAL_TOKEN = process.env.SKILLHIVE_INTERNAL_TOKEN;
-if (!INTERNAL_TOKEN) {
-  console.warn(
-    "[skillhive] ⚠️ 未配置 SKILLHIVE_INTERNAL_TOKEN，/internal/* 接口处于无鉴权开发模式（正式部署必须配置）",
-  );
-}
 
 /**
  * POST /internal/prompts-changed —— Registry 发布/下架 skill 后调用。
@@ -101,7 +143,7 @@ app.post("/internal/prompts-changed", async (req, res) => {
   let failed = 0;
   for (const session of sseSessions.values()) {
     try {
-      await refreshSkillPrompts(session.server, session.skillPrompts);
+      await refreshSkillPrompts(session.server, session.skillPrompts, session.caller);
       refreshed++;
     } catch (err) {
       failed++;

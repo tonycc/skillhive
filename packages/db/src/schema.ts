@@ -112,6 +112,27 @@ export const skillVersionFiles = pgTable(
   (t) => [index("skill_version_files_version_idx").on(t.versionId)],
 );
 
+// ---------- 个人接入令牌（PAT，供 MCP 客户端鉴权） ----------
+
+export const userTokens = pgTable(
+  "user_tokens",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** 备注，如“工作 Mac 的 WorkBuddy” */
+    name: varchar("name", { length: 128 }).notNull().default(""),
+    /** 令牌哈希（sha256）；明文仅创建时返回一次，服务端不存明文 */
+    tokenHash: varchar("token_hash", { length: 128 }).notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    /** 吊销时间；非 null 即失效 */
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [index("user_tokens_user_idx").on(t.userId)],
+);
+
 /** 部门级可见性（空表记录 = 全员可见） */
 export const skillDepartmentVisibility = pgTable(
   "skill_department_visibility",
