@@ -95,6 +95,8 @@ jobs:
           script: |
             set -e
             cd /opt/skillhive
+            # 固定项目名：复用既有容器命名与 postgres 数据卷（skillhive_pgdata）
+            export COMPOSE_PROJECT_NAME=skillhive
             export SERVER_IMAGE="$SERVER_IMAGE:latest"
             export CONSOLE_IMAGE="$CONSOLE_IMAGE:latest"
             docker compose -f docker-compose.prod.yml pull
