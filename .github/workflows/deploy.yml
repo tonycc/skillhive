@@ -1,0 +1,102 @@
+# 自动部署到阿里云：
+#   质量门禁（lint + test + build）→ 构建镜像推送 ACR（容器镜像服务）
+#   → scp 下发 compose 文件 → SSH 到 ECS 拉取镜像并重启
+#
+# 需要在仓库 Settings → Secrets and variables → Actions 配置：
+#   ACR_REGISTRY    如 registry.cn-hangzhou.aliyuncs.com
+#   ACR_NAMESPACE   ACR 命名空间
+#   ACR_USERNAME    ACR 访问凭证（控制台「访问凭证」页获取）
+#   ACR_PASSWORD
+#   ECS_HOST        服务器公网 IP / 域名
+#   ECS_USER        SSH 用户（如 root）
+#   ECS_SSH_KEY     SSH 私钥（建议专用部署密钥对）
+#
+# 服务器一次性准备（见 README「生产部署」节）：
+#   安装 Docker + compose 插件；/opt/skillhive/.env 按 .env.example 配好；
+#   安全组放行 Console（8080）与 MCP（3100）端口
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  SERVER_IMAGE: ${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/skillhive-server
+  CONSOLE_IMAGE: ${{ secrets.ACR_REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/skillhive-console
+
+jobs:
+  gate:
+    name: 质量门禁
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+
+  deploy:
+    name: 构建镜像并部署
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 登录阿里云 ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: 构建并推送 server 镜像（registry / mcp-server 共用）
+        run: |
+          TAG=${GITHUB_SHA::8}
+          docker build -f deploy/Dockerfile.server \
+            -t "$SERVER_IMAGE:$TAG" -t "$SERVER_IMAGE:latest" .
+          docker push "$SERVER_IMAGE:$TAG"
+          docker push "$SERVER_IMAGE:latest"
+
+      - name: 构建并推送 console 镜像
+        run: |
+          TAG=${GITHUB_SHA::8}
+          docker build -f deploy/Dockerfile.console \
+            -t "$CONSOLE_IMAGE:$TAG" -t "$CONSOLE_IMAGE:latest" .
+          docker push "$CONSOLE_IMAGE:$TAG"
+          docker push "$CONSOLE_IMAGE:latest"
+
+      - name: 下发 compose 文件到服务器
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          source: docker-compose.prod.yml
+          target: /opt/skillhive/
+          strip_components: 0
+
+      - name: 服务器拉取镜像并滚动重启
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          SERVER_IMAGE: ${{ env.SERVER_IMAGE }}
+          CONSOLE_IMAGE: ${{ env.CONSOLE_IMAGE }}
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          envs: SERVER_IMAGE,CONSOLE_IMAGE
+          script: |
+            set -e
+            cd /opt/skillhive
+            export SERVER_IMAGE="$SERVER_IMAGE:latest"
+            export CONSOLE_IMAGE="$CONSOLE_IMAGE:latest"
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d
+            docker image prune -f
