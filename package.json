@@ -2,6 +2,7 @@
   "name": "skillhive",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "SkillHive —— 企业内部 AI Skill 中枢：IT 集中开发与治理，全员通过 MCP 客户端使用",
   "license": "MIT",
   "packageManager": "pnpm@11.9.0",
@@ -11,15 +12,25 @@
     "dev:mcp": "pnpm --filter @skillhive/mcp-server dev",
     "dev:console": "pnpm --filter @skillhive/console dev",
     "dev:cli": "pnpm --filter skillhive-cli dev",
-    "build": "pnpm -r build",
+    "build": "pnpm -r --sort build",
     "typecheck": "pnpm -r typecheck",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "db:generate": "pnpm --filter @skillhive/db db:generate",
     "db:migrate": "pnpm --filter @skillhive/db db:migrate",
     "db:studio": "pnpm --filter @skillhive/db db:studio"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "concurrently": "^9.2.0",
-    "typescript": "^5.7.3"
+    "eslint": "^9.39.5",
+    "eslint-plugin-vue": "^10.10.0",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.67.0",
+    "vitest": "^3.2.7",
+    "vue-eslint-parser": "^10.4.1"
   },
   "engines": {
     "node": ">=20"

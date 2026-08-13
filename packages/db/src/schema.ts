@@ -8,6 +8,7 @@ import {
   timestamp,
   primaryKey,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 // ---------- 枚举 ----------
@@ -45,6 +46,10 @@ export const users = pgTable("users", {
   name: varchar("name", { length: 128 }).notNull(),
   /** scrypt 密码哈希（scrypt:salt:hash，base64）；为 null 的账号不可登录 */
   passwordHash: varchar("password_hash", { length: 256 }),
+  /** 会话版本；修改密码时递增，使此前签发的 JWT 立即失效 */
+  sessionVersion: integer("session_version").notNull().default(0),
+  /** 非空表示账号已停用；所有登录态与 PAT 身份解析都必须拒绝 */
+  disabledAt: timestamp("disabled_at", { withTimezone: true }),
   role: userRoleEnum("role").notNull().default("member"),
   departmentId: uuid("department_id").references(() => departments.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -90,7 +95,10 @@ export const skillVersions = pgTable(
     publishedBy: uuid("published_by").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("skill_versions_skill_idx").on(t.skillId)],
+  (t) => [
+    index("skill_versions_skill_idx").on(t.skillId),
+    uniqueIndex("skill_versions_skill_version_unique").on(t.skillId, t.version),
+  ],
 );
 
 /** 技能包资源文件（scripts/ references/ assets/），随版本不可变存储 */
@@ -109,7 +117,10 @@ export const skillVersionFiles = pgTable(
     size: integer("size").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("skill_version_files_version_idx").on(t.versionId)],
+  (t) => [
+    index("skill_version_files_version_idx").on(t.versionId),
+    uniqueIndex("skill_version_files_version_path_unique").on(t.versionId, t.path),
+  ],
 );
 
 // ---------- 个人接入令牌（PAT，供 MCP 客户端鉴权） ----------

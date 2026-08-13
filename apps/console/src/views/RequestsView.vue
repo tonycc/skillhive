@@ -15,7 +15,8 @@ const loadFailed = ref(false);
 
 const dialogVisible = ref(false);
 const submitting = ref(false);
-const form = reactive({ title: "", description: "", nickname: "" });
+const form = reactive({ title: "", description: "" });
+const votingIds = ref(new Set<string>());
 
 const STATUS_META: Record<RequestStatus, { label: string; type: "info" | "warning" | "success" | "danger" }> = {
   open: { label: "待评估", type: "info" },
@@ -25,6 +26,8 @@ const STATUS_META: Record<RequestStatus, { label: string; type: "info" | "warnin
 };
 
 async function load(): Promise<void> {
+  loading.value = true;
+  loadFailed.value = false;
   try {
     requests.value = await fetchRequests();
   } catch {
@@ -46,11 +49,10 @@ async function onSubmit(): Promise<void> {
     await createRequest({
       title: form.title.trim(),
       description: form.description.trim(),
-      nickname: form.nickname.trim() || "匿名员工",
     });
     ElMessage.success("许愿成功，等待 IT 评估");
     dialogVisible.value = false;
-    form.title = form.description = form.nickname = "";
+    form.title = form.description = "";
     await load();
   } catch (err) {
     ElMessage.error((err as Error).message);
@@ -60,26 +62,36 @@ async function onSubmit(): Promise<void> {
 }
 
 async function onVote(r: SkillRequest): Promise<void> {
+  if (votingIds.value.has(r.id)) return;
+  votingIds.value = new Set(votingIds.value).add(r.id);
   try {
     const { voted, votes } = await toggleVote(r.id);
     r.votedByMe = voted;
     r.votes = votes;
   } catch (err) {
     ElMessage.error((err as Error).message);
+  } finally {
+    const next = new Set(votingIds.value);
+    next.delete(r.id);
+    votingIds.value = next;
   }
 }
 </script>
 
 <template>
-  <div style="display: flex; justify-content: space-between; align-items: center">
-    <p style="color: var(--text-secondary); margin: 0">
-      想要还没有的技能？许下愿望，得票高的优先开发。
-    </p>
-    <el-button type="primary" @click="dialogVisible = true">✨ 我要许愿</el-button>
-  </div>
+  <section aria-labelledby="requests-title">
+    <div class="page-heading">
+      <div>
+        <h1 id="requests-title" class="page-title">许愿墙</h1>
+        <p class="page-description">想要还没有的技能？许下愿望，得票高的优先开发。</p>
+      </div>
+      <el-button type="primary" @click="dialogVisible = true">✨ 我要许愿</el-button>
+    </div>
 
   <el-skeleton v-if="loading" :rows="4" animated style="margin-top: 24px" />
-  <el-empty v-else-if="loadFailed" description="加载失败，请确认 Registry 服务已启动" />
+  <el-empty v-else-if="loadFailed" description="愿望列表加载失败，请稍后重试">
+    <el-button type="primary" @click="load">重新加载</el-button>
+  </el-empty>
   <el-empty v-else-if="requests.length === 0" description="还没有愿望，来当第一个许愿的人" />
 
   <div v-else class="request-list">
@@ -87,7 +99,9 @@ async function onVote(r: SkillRequest): Promise<void> {
       <button
         class="vote-btn"
         :class="{ voted: r.votedByMe }"
-        :title="r.votedByMe ? '取消投票' : '投票'"
+        :disabled="votingIds.has(r.id)"
+        :aria-label="`${r.votedByMe ? '取消支持' : '支持'}「${r.title}」，当前 ${r.votes} 票`"
+        :aria-pressed="r.votedByMe"
         @click="onVote(r)"
       >
         <span class="vote-arrow">▲</span>
@@ -107,14 +121,15 @@ async function onVote(r: SkillRequest): Promise<void> {
         </div>
         <p v-if="r.description" class="request-desc">{{ r.description }}</p>
         <span class="request-meta">
-          {{ r.requesterName ?? "匿名员工" }} ·
+          {{ r.requesterName ?? "未知员工" }} ·
           {{ new Date(r.createdAt).toLocaleDateString("zh-CN") }}
         </span>
       </div>
     </div>
   </div>
+  </section>
 
-  <el-dialog v-model="dialogVisible" title="许下你的愿望" width="480px">
+  <el-dialog v-model="dialogVisible" title="新建技能愿望" width="min(480px, 92vw)">
     <el-form label-position="top">
       <el-form-item label="想要什么技能？（一句话）" required>
         <el-input
@@ -126,9 +141,6 @@ async function onVote(r: SkillRequest): Promise<void> {
       </el-form-item>
       <el-form-item label="补充说明（使用场景、期望效果）">
         <el-input v-model="form.description" type="textarea" :rows="4" maxlength="500" />
-      </el-form-item>
-      <el-form-item label="你的称呼（可选）">
-        <el-input v-model="form.nickname" maxlength="32" placeholder="匿名员工" />
       </el-form-item>
     </el-form>
     <template #footer>

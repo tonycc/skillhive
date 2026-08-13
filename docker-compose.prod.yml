@@ -14,15 +14,15 @@ name: skillhive-prod
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.10-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-skillhive}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-skillhive}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-skillhive}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -32,42 +32,77 @@ services:
     build:
       context: .
       dockerfile: deploy/Dockerfile.server
-    image: skillhive-server:latest
+    image: skillhive-server:0.1.0
     command: sh deploy/entrypoint-registry.sh
     env_file: .env
     environment:
       # 容器网络内地址，覆盖 .env 中的 localhost 配置
-      DATABASE_URL: postgres://${POSTGRES_USER:-skillhive}:${POSTGRES_PASSWORD:-skillhive}@postgres:5432/${POSTGRES_DB:-skillhive}
+      DATABASE_URL: postgres://${POSTGRES_USER:-skillhive}:${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-skillhive}
+      SKILLHIVE_SESSION_SECRET: ${SKILLHIVE_SESSION_SECRET:?请设置至少 32 字符的 SKILLHIVE_SESSION_SECRET}
+      SKILLHIVE_INTERNAL_TOKEN: ${SKILLHIVE_INTERNAL_TOKEN:?请设置至少 32 字符的 SKILLHIVE_INTERNAL_TOKEN}
       MCP_SERVER_URL: http://mcp-server:3100
       REGISTRY_PORT: "3001"
+      TRUST_PROXY: "1"
     ports:
-      - "${REGISTRY_HOST_PORT:-3001}:3001"
+      - "${REGISTRY_BIND_ADDRESS:-127.0.0.1}:${REGISTRY_HOST_PORT:-3001}:3001"
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
   mcp-server:
-    image: skillhive-server:latest
-    command: pnpm --filter @skillhive/mcp-server exec tsx src/http.ts
+    image: skillhive-server:0.1.0
+    command: node apps/mcp-server/dist/http.js
     env_file: .env
     environment:
       SKILLHIVE_REGISTRY_URL: http://registry:3001
+      SKILLHIVE_INTERNAL_TOKEN: ${SKILLHIVE_INTERNAL_TOKEN:?请设置至少 32 字符的 SKILLHIVE_INTERNAL_TOKEN}
+      PUBLIC_MCP_URL: ${PUBLIC_MCP_URL:-/sse}
+      TRUST_PROXY: "1"
+      SKILLHIVE_ALLOW_HTTP: ${SKILLHIVE_ALLOW_HTTP:-}
       MCP_PORT: "3100"
     ports:
-      - "${MCP_HOST_PORT:-3100}:3100"
+      - "${MCP_BIND_ADDRESS:-127.0.0.1}:${MCP_HOST_PORT:-3100}:3100"
     depends_on:
-      - registry
+      registry:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3100/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
   console:
     build:
       context: .
       dockerfile: deploy/Dockerfile.console
+      args:
+        VITE_MCP_URL: ${PUBLIC_MCP_URL:-/sse}
     ports:
-      - "${CONSOLE_HOST_PORT:-8080}:80"
+      - "${CONSOLE_BIND_ADDRESS:-127.0.0.1}:${CONSOLE_HOST_PORT:-8080}:80"
     depends_on:
-      - registry
+      registry:
+        condition: service_healthy
+      mcp-server:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

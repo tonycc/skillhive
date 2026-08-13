@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { fetchTokens, createToken, revokeToken, type PatInfo } from "../api";
 
@@ -7,10 +7,20 @@ import { fetchTokens, createToken, revokeToken, type PatInfo } from "../api";
 
 const tokens = ref<PatInfo[]>([]);
 const loading = ref(true);
+const loadFailed = ref(false);
 const newName = ref("");
 const creating = ref(false);
 /** 刚生成的令牌明文（仅此一次可见） */
 const createdToken = ref("");
+
+const mcpUrl = computed(() => {
+  const configured = import.meta.env.VITE_MCP_URL?.trim();
+  try {
+    return new URL(configured || "/sse", window.location.origin).toString();
+  } catch {
+    return new URL("/sse", window.location.origin).toString();
+  }
+});
 
 /** 生成后展示给用户的 MCP 配置片段（令牌已填入） */
 const configSnippet = computed(() =>
@@ -18,7 +28,7 @@ const configSnippet = computed(() =>
     {
       mcpServers: {
         skillhive: {
-          url: "http://服务器地址:3100/sse",
+          url: mcpUrl.value,
           headers: { Authorization: `Bearer ${createdToken.value}` },
         },
       },
@@ -30,15 +40,24 @@ const configSnippet = computed(() =>
 
 async function reload(): Promise<void> {
   loading.value = true;
+  loadFailed.value = false;
   try {
     tokens.value = await fetchTokens();
+  } catch (error) {
+    loadFailed.value = true;
+    ElMessage.error((error as Error).message);
   } finally {
     loading.value = false;
   }
 }
 
 async function onCreate(): Promise<void> {
+  if (newName.value.trim().length > 100) {
+    ElMessage.warning("令牌备注不能超过 100 个字符");
+    return;
+  }
   creating.value = true;
+  createdToken.value = "";
   try {
     const { token } = await createToken(newName.value.trim());
     createdToken.value = token;
@@ -53,22 +72,26 @@ async function onCreate(): Promise<void> {
 }
 
 async function onCopy(text: string): Promise<void> {
-  await navigator.clipboard.writeText(text);
-  ElMessage.success("已复制到剪贴板");
+  try {
+    await navigator.clipboard.writeText(text);
+    ElMessage.success("已复制到剪贴板");
+  } catch {
+    ElMessage.error("复制失败，请手动选择并复制内容");
+  }
 }
 
 async function onRevoke(row: PatInfo): Promise<void> {
-  await ElMessageBox.confirm(
-    "吊销后使用该令牌的 MCP 客户端将立即无法连接，确定吊销？",
-    "吊销令牌",
-    { type: "warning", confirmButtonText: "吊销", cancelButtonText: "取消" },
-  );
   try {
+    await ElMessageBox.confirm(
+      `吊销「${row.name || "无备注令牌"}」后，使用它的 MCP 客户端将立即断开。`,
+      "确认吊销接入令牌",
+      { type: "warning", confirmButtonText: "吊销", cancelButtonText: "取消" },
+    );
     await revokeToken(row.id);
     await reload();
     ElMessage.success("已吊销");
   } catch (err) {
-    ElMessage.error((err as Error).message);
+    if (err !== "cancel" && err !== "close") ElMessage.error((err as Error).message);
   }
 }
 
@@ -77,21 +100,25 @@ function formatTime(iso: string | null): string {
 }
 
 onMounted(reload);
+onBeforeUnmount(() => {
+  createdToken.value = "";
+});
 </script>
 
 <template>
-  <h2 style="margin: 16px 0">接入设置</h2>
-  <p style="color: var(--text-secondary); font-size: 13px; max-width: 720px">
+  <h1 class="page-title">接入设置</h1>
+  <p class="page-description">
     接入令牌（PAT）用于 WorkBuddy 等 MCP 客户端连接 SkillHive。
     生成后把下方配置片段填入客户端的 MCP 配置文件（如 ~/.workbuddy/mcp.json），重启客户端生效。
   </p>
 
   <!-- 生成新令牌 -->
-  <el-card style="max-width: 720px; margin-bottom: 16px">
-    <div style="display: flex; gap: 12px">
+  <el-card style="width: 100%; margin-bottom: 16px">
+    <div class="token-create-row">
       <el-input
         v-model="newName"
         placeholder="备注（可选），如：工作 Mac 的 WorkBuddy"
+        maxlength="100"
         @keyup.enter="onCreate"
       />
       <el-button type="primary" :loading="creating" @click="onCreate">生成令牌</el-button>
@@ -113,8 +140,12 @@ onMounted(reload);
   </el-card>
 
   <!-- 令牌列表 -->
-  <el-card style="max-width: 720px">
-    <el-table :data="tokens" v-loading="loading" size="small">
+  <el-card style="width: 100%">
+    <el-empty v-if="loadFailed && !loading" description="令牌列表加载失败">
+      <el-button type="primary" @click="reload">重新加载</el-button>
+    </el-empty>
+    <el-empty v-else-if="!loading && tokens.length === 0" description="还没有接入令牌，请按需生成" />
+    <el-table v-else :data="tokens" v-loading="loading" size="small" style="width: 100%">
       <el-table-column prop="name" label="备注">
         <template #default="{ row }">{{ row.name || "（无备注）" }}</template>
       </el-table-column>
@@ -131,7 +162,7 @@ onMounted(reload);
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column width="90">
+      <el-table-column label="操作" width="90">
         <template #default="{ row }">
           <el-button
             v-if="!row.revoked"
@@ -170,5 +201,17 @@ onMounted(reload);
   background: var(--el-fill-color-light);
   border-radius: 6px;
   overflow-x: auto;
+}
+.token-create-row {
+  display: flex;
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .token-create-row,
+  .token-box {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 </style>

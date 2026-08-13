@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 import { db, skills, usageEvents } from "@skillhive/db";
 import { count, eq, gte, sql } from "drizzle-orm";
-import { requireAuth } from "../auth.js";
+import { requirePublisher } from "../auth.js";
 
 const app = new Hono();
 
-// 看板数据仅 Console 消费，要求登录（skill 内容接口因需下发员工机保持公开）
-app.use("*", requireAuth);
+// 使用统计可能泄露团队行为，仅 publisher / admin 可查看。
+app.use("*", requirePublisher);
 
 interface EventCounts {
   views: number;
@@ -82,7 +82,10 @@ app.get("/skills", async (c) => {
 
 /** GET /api/stats/trend?days=14 — 每日使用趋势（看板柱状图） */
 app.get("/trend", async (c) => {
-  const days = Math.min(Number(c.req.query("days") ?? 14) || 14, 90);
+  const requestedDays = Number(c.req.query("days") ?? 14);
+  const days = Number.isFinite(requestedDays)
+    ? Math.min(Math.max(Math.trunc(requestedDays), 1), 90)
+    : 14;
   const since = new Date(Date.now() - (days - 1) * 24 * 60 * 60 * 1000);
   since.setHours(0, 0, 0, 0);
 

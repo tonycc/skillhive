@@ -12,7 +12,20 @@ import {
   type SkillResourceFile,
 } from "@skillhive/skill-schema";
 
-const REGISTRY_URL = process.env.SKILLHIVE_REGISTRY_URL ?? "http://localhost:3001";
+const REGISTRY_URL = (process.env.SKILLHIVE_REGISTRY_URL ?? "http://localhost:3001").replace(
+  /\/$/,
+  "",
+);
+
+function assertSafeRegistryUrl(): void {
+  const url = new URL(REGISTRY_URL);
+  const isLoopback = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
+  if (url.protocol !== "https:" && !isLoopback && process.env.SKILLHIVE_ALLOW_INSECURE_HTTP !== "1") {
+    throw new Error(
+      "拒绝通过明文 HTTP 向远程 Registry 发送凭证；请使用 HTTPS，或仅在受控网络显式设置 SKILLHIVE_ALLOW_INSECURE_HTTP=1",
+    );
+  }
+}
 
 const program = new Command();
 
@@ -62,6 +75,7 @@ program
   .option("--email <email>", "账号邮箱")
   .option("--password <password>", "密码（不推荐，会留在 shell 历史中）")
   .action(async (opts: { email?: string; password?: string }) => {
+    assertSafeRegistryUrl();
     const email = opts.email ?? (await promptText("账号："));
     const password = opts.password ?? (await promptText("密码：", true));
     if (!email || !password) {
@@ -71,7 +85,10 @@ program
 
     const res = await fetch(`${REGISTRY_URL}/api/auth/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-SkillHive-Session-Mode": "bearer",
+      },
       body: JSON.stringify({ email, password }),
     });
     const json = (await res.json()) as {
@@ -109,6 +126,7 @@ program
   .command("whoami")
   .description("查看当前登录状态")
   .action(async () => {
+    assertSafeRegistryUrl();
     const cred = await readCredentials();
     if (!cred) {
       console.log("未登录（执行 skillhive login 登录）");
@@ -165,6 +183,7 @@ program
   .argument("<path>", "SKILL.md 文件、技能包目录，或 zip 压缩技能包")
   .option("--changelog <text>", "本次变更说明", "")
   .action(async (path: string, opts: { changelog: string }) => {
+    assertSafeRegistryUrl();
     const target = await stat(path).catch(() => null);
     if (!target) {
       console.error(`路径不存在：${path}`);

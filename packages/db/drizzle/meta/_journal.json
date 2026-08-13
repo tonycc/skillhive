@@ -36,6 +36,20 @@
       "when": 1786584991632,
       "tag": "0004_light_exodus",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786589996992,
+      "tag": "0005_loud_stone_men",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786594056400,
+      "tag": "0006_wild_rick_jones",
+      "breakpoints": true
     }
   ]
 }

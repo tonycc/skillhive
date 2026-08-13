@@ -1,17 +1,21 @@
-# SkillHive 服务端共享镜像（registry / mcp-server 共用，以 command 区分启动角色）
-#
-# workspace 包的 main 直接指向 TS 源码，因此镜像内以 tsx 运行，无需编译编排。
+# SkillHive 服务端共享镜像（registry / mcp-server 共用，以 command 区分启动角色）。
+# 构建阶段生成 workspace 与应用 JS，运行阶段不再依赖 tsx 解释源码。
 
 FROM node:22-alpine
-# 网络环境访问 npmjs 不稳定：corepack 下载 pnpm 与 pnpm 安装依赖均走国内镜像
-ENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
+# 默认使用官方源；受限网络可通过 --build-arg NPM_REGISTRY=... 覆盖。
+ARG NPM_REGISTRY=https://registry.npmjs.org
+ENV COREPACK_NPM_REGISTRY=$NPM_REGISTRY
 RUN corepack enable \
-  && pnpm config set registry https://registry.npmmirror.com \
+  && pnpm config set registry "$NPM_REGISTRY" \
   && pnpm config set fetch-retries 5
 
 WORKDIR /app
 COPY . .
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --prod=false \
+  && pnpm --filter @skillhive/registry... build \
+  && pnpm --filter @skillhive/mcp-server... build
 
 ENV NODE_ENV=production
+# 源码与依赖只需运行时可读；避免对整个 pnpm store 递归 chown 造成巨量镜像层写放大。
 RUN chmod +x deploy/entrypoint-registry.sh
+USER node

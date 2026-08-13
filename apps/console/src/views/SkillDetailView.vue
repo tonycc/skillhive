@@ -1,15 +1,22 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from "vue";
-import { marked } from "marked";
+import { computed, nextTick, ref, watch } from "vue";
 import type { ElTree } from "element-plus";
-import { fetchSkillDetail, reportEvent, type SkillDetail } from "../api";
+import {
+  ApiError,
+  fetchSkillDetail,
+  fetchSkillFile,
+  reportEvent,
+  type SkillDetail,
+} from "../api";
+import { renderSafeMarkdown } from "../markdown";
 
 const props = defineProps<{ slug: string }>();
 
 const skill = ref<SkillDetail | null>(null);
 const bodyHtml = ref("");
 const loading = ref(true);
-const notFound = ref(false);
+const errorMessage = ref("");
+let skillRequestId = 0;
 
 // ---------- 技能包文件树 + 预览 ----------
 
@@ -77,6 +84,9 @@ interface Preview {
 }
 
 const preview = ref<Preview | null>(null);
+const previewLoading = ref(false);
+const previewError = ref("");
+let previewRequestId = 0;
 const treeRef = ref<InstanceType<typeof ElTree>>();
 
 /** 可按文本预览的扩展名 */
@@ -89,39 +99,103 @@ const IMG_MIME: Record<string, string> = {
   png: "image/png",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",
-  gif: "image/gif",
   webp: "image/webp",
-  svg: "image/svg+xml",
 };
 
 /** base64 → UTF-8 文本 */
 function decodeBase64(b64: string): string {
   const bin = atob(b64);
   const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-  return new TextDecoder("utf-8").decode(bytes);
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+}
+
+function hasExpectedImageSignature(extension: string, contentBase64: string): boolean {
+  try {
+    const binary = atob(contentBase64);
+    const startsWith = (bytes: readonly number[]) =>
+      bytes.every((byte, index) => binary.charCodeAt(index) === byte);
+    if (extension === "png") {
+      return startsWith([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    }
+    if (extension === "jpg" || extension === "jpeg") {
+      return startsWith([0xff, 0xd8, 0xff]);
+    }
+    return binary.length >= 12
+      && binary.slice(0, 4) === "RIFF"
+      && binary.slice(8, 12) === "WEBP";
+  } catch {
+    return false;
+  }
 }
 
 async function selectFile(path: string): Promise<void> {
+  const requestId = ++previewRequestId;
+  previewError.value = "";
   if (path === "SKILL.md") {
-    preview.value = {
-      path,
-      kind: "markdown",
-      html: await marked.parse(skill.value?.latestVersion?.body ?? ""),
-    };
+    previewLoading.value = true;
+    try {
+      const html = await renderSafeMarkdown(skill.value?.latestVersion?.body ?? "");
+      if (requestId !== previewRequestId) return;
+      preview.value = { path, kind: "markdown", html };
+    } finally {
+      if (requestId === previewRequestId) previewLoading.value = false;
+    }
     return;
   }
-  const file = skill.value?.latestVersion?.files.find((f) => f.path === path);
-  if (!file) return;
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  if (ext === "md") {
-    preview.value = { path, kind: "markdown", html: await marked.parse(decodeBase64(file.contentBase64)) };
-  } else if (IMG_MIME[ext]) {
-    preview.value = { path, kind: "image", dataUrl: `data:${IMG_MIME[ext]};base64,${file.contentBase64}` };
-  } else if (TEXT_EXTS.has(ext)) {
-    preview.value = { path, kind: "text", text: decodeBase64(file.contentBase64) };
-  } else {
-    preview.value = { path, kind: "binary" };
+  const manifest = skill.value?.latestVersion?.files.find((file) => file.path === path);
+  const version = skill.value?.latestVersion?.version;
+  if (!manifest || !version) {
+    preview.value = null;
+    previewError.value = "资源文件不存在，请重新加载技能详情";
+    return;
   }
+
+  previewLoading.value = true;
+  preview.value = null;
+  try {
+    const file = await fetchSkillFile(props.slug, path, version);
+    if (requestId !== previewRequestId) return;
+    if (file.version !== version || file.path !== path || file.size !== manifest.size) {
+      throw new Error("资源文件响应与清单不一致");
+    }
+    const ext = path.split(".").pop()?.toLowerCase() ?? "";
+    if (ext === "md") {
+      const html = await renderSafeMarkdown(decodeBase64(file.contentBase64));
+      if (requestId !== previewRequestId) return;
+      preview.value = {
+        path,
+        kind: "markdown",
+        html,
+      };
+    } else if (IMG_MIME[ext]) {
+      if (!hasExpectedImageSignature(ext, file.contentBase64)) {
+        throw new Error("资源图片格式无效");
+      }
+      preview.value = {
+        path,
+        kind: "image",
+        dataUrl: `data:${IMG_MIME[ext]};base64,${file.contentBase64}`,
+      };
+    } else if (TEXT_EXTS.has(ext)) {
+      preview.value = { path, kind: "text", text: decodeBase64(file.contentBase64) };
+    } else {
+      preview.value = { path, kind: "binary" };
+    }
+  } catch (error) {
+    if (requestId !== previewRequestId) return;
+    previewError.value = error instanceof ApiError && error.status === 403
+      ? "你已无权读取该资源文件"
+      : error instanceof ApiError && error.status === 404
+        ? "资源文件不存在或版本已更新"
+        : "资源文件加载失败，请稍后重试";
+  } finally {
+    if (requestId === previewRequestId) previewLoading.value = false;
+  }
+}
+
+function retryPreview(): void {
+  const path = treeRef.value?.getCurrentKey();
+  if (typeof path === "string") void selectFile(path);
 }
 
 /** 点击树节点：文件 → 右侧预览；目录 → 交给默认展开/折叠 */
@@ -130,37 +204,63 @@ function onNodeClick(data: FileNode): void {
   void selectFile(data.path);
 }
 
-onMounted(async () => {
+async function loadSkill(): Promise<void> {
+  const requestId = ++skillRequestId;
+  const requestedSlug = props.slug;
+  loading.value = true;
+  errorMessage.value = "";
+  skill.value = null;
+  previewRequestId += 1;
+  preview.value = null;
+  previewLoading.value = false;
+  previewError.value = "";
+  bodyHtml.value = "";
   try {
-    skill.value = await fetchSkillDetail(props.slug);
-    if (skill.value.latestVersion?.body) {
-      bodyHtml.value = await marked.parse(skill.value.latestVersion.body);
-    }
+    const detail = await fetchSkillDetail(requestedSlug);
+    if (requestId !== skillRequestId) return;
+    const renderedBody = detail.latestVersion?.body
+      ? await renderSafeMarkdown(detail.latestVersion.body)
+      : "";
+    if (requestId !== skillRequestId) return;
+    skill.value = detail;
+    bodyHtml.value = renderedBody;
     // 默认选中 SKILL.md 预览
     void selectFile("SKILL.md");
     void nextTick(() => treeRef.value?.setCurrentKey("SKILL.md"));
     // 上报浏览埋点
-    reportEvent(props.slug, "view");
-  } catch {
-    notFound.value = true;
+    reportEvent(requestedSlug, "view");
+  } catch (error) {
+    if (requestId !== skillRequestId) return;
+    if (error instanceof ApiError && error.status === 403) {
+      errorMessage.value = "你没有权限查看这个技能，请联系技能负责人或管理员";
+    } else if (error instanceof ApiError && error.status === 404) {
+      errorMessage.value = `技能「${props.slug}」不存在或尚未发布`;
+    } else {
+      errorMessage.value = "技能详情加载失败，请稍后重试";
+    }
   } finally {
-    loading.value = false;
+    if (requestId === skillRequestId) loading.value = false;
   }
-});
+}
+
+watch(() => props.slug, loadSkill, { immediate: true });
 </script>
 
 <template>
   <router-link to="/" class="back-link">← 返回技能市场</router-link>
 
+  <h1 v-if="loading" class="page-title">技能详情</h1>
   <el-skeleton v-if="loading" :rows="6" animated style="margin-top: 24px" />
 
-  <el-empty
-    v-else-if="notFound || !skill"
-    :description="`技能「${props.slug}」不存在或 Registry 服务不可用`"
-  />
+  <section v-else-if="errorMessage || !skill" aria-labelledby="detail-error-title">
+    <h1 id="detail-error-title" class="page-title">技能详情</h1>
+    <el-empty :description="errorMessage">
+      <el-button type="primary" @click="loadSkill">重新加载</el-button>
+    </el-empty>
+  </section>
 
   <template v-else>
-    <h2 style="margin: 16px 0 4px">{{ skill.name }}</h2>
+    <h1 class="page-title">{{ skill.name }}</h1>
     <p style="color: var(--text-secondary); margin-top: 0">{{ skill.summary }}</p>
 
     <div class="detail-meta">
@@ -217,7 +317,11 @@ onMounted(async () => {
           </el-tree>
         </div>
         <div class="pkg-preview">
-          <template v-if="preview">
+          <el-skeleton v-if="previewLoading" :rows="5" animated aria-label="资源文件加载中" />
+          <el-empty v-else-if="previewError" :description="previewError" :image-size="60">
+            <el-button type="primary" size="small" @click="retryPreview">重新加载</el-button>
+          </el-empty>
+          <template v-else-if="preview">
             <div class="pkg-preview-header">{{ preview.path }}</div>
             <article
               v-if="preview.kind === 'markdown'"
@@ -233,7 +337,11 @@ onMounted(async () => {
               :alt="preview.path"
               style="max-width: 100%"
             />
-            <el-empty v-else description="二进制文件，暂不支持预览" :image-size="60" />
+            <el-empty
+              v-else
+              :description="preview.path.toLowerCase().endsWith('.svg') ? '为避免执行不可信脚本，SVG 文件不提供内联预览' : '二进制文件，暂不支持预览'"
+              :image-size="60"
+            />
           </template>
         </div>
       </div>
@@ -278,5 +386,18 @@ onMounted(async () => {
   border-radius: 6px;
   overflow-x: auto;
   white-space: pre;
+}
+
+@media (max-width: 720px) {
+  .pkg-layout {
+    flex-direction: column;
+  }
+
+  .pkg-tree {
+    width: 100%;
+    border-right: 0;
+    border-bottom: 1px solid var(--el-border-color-lighter);
+    padding: 0 0 12px;
+  }
 }
 </style>

@@ -1,4 +1,6 @@
-/** Registry API 访问层（开发态经 Vite 代理到 Registry） */
+import { shallowRef } from "vue";
+
+/** Registry API 访问层（开发态经 Vite 代理到 Registry）。 */
 
 export interface SkillCard {
   id: string;
@@ -14,17 +16,143 @@ export interface SkillDetail extends SkillCard {
     version: string;
     changelog: string;
     body: string;
-    /** 技能包资源文件（scripts/ references/ assets/） */
-    files: { path: string; contentBase64: string; size: number }[];
+    /** 技能包资源清单；正文通过单文件端点按需读取。 */
+    files: SkillFileManifest[];
   } | null;
   visibleDepartments: string[];
 }
 
+export interface SkillFileManifest {
+  path: string;
+  size: number;
+}
+
+export interface SkillFile extends SkillFileManifest {
+  version: string;
+  contentBase64: string;
+}
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  role: "admin" | "publisher" | "member";
+  departmentId: string | null;
+}
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+/**
+ * 登录态只保存在内存中。会话凭证由 Registry 写入 HttpOnly Cookie，脚本不可读取，
+ * 页面刷新后通过 /me 恢复用户资料。
+ */
+export const currentUser = shallowRef<AuthUser | null>(null);
+let sessionChecked = false;
+let sessionRequest: Promise<AuthUser | null> | null = null;
+let sessionRequestForce = false;
+
+// 清理旧版本曾写入浏览器的可读 JWT 与匿名投票标识。
+try {
+  localStorage.removeItem("skillhive-auth");
+  localStorage.removeItem("skillhive-voter");
+} catch {
+  // 隐私模式下 localStorage 可能不可用，不影响 Cookie 会话。
+}
+
+function request(path: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(path, { credentials: "same-origin", ...init });
+}
+
+async function responseError(res: Response, fallback: string): Promise<ApiError> {
+  const json = (await res.json().catch(() => ({}))) as { error?: string };
+  return new ApiError(json.error ?? `${fallback}（${res.status}）`, res.status);
+}
+
+function handleUnauthorized(res: Response): void {
+  if (res.status !== 401) return;
+  currentUser.value = null;
+  sessionChecked = true;
+  if (location.pathname !== "/login") {
+    const redirect = encodeURIComponent(location.pathname + location.search);
+    location.assign(`/login?redirect=${redirect}`);
+  }
+}
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path, { headers: authHeaders() });
+  const res = await request(path);
   handleUnauthorized(res);
-  if (!res.ok) throw new Error(`请求失败：${res.status}`);
+  if (!res.ok) throw await responseError(res, "请求失败");
   return (await res.json()) as T;
+}
+
+/** 在路由进入前恢复/校验 Cookie 会话；并发调用只发出一次请求。 */
+export async function refreshSession(force = false): Promise<AuthUser | null> {
+  if (sessionChecked && !force) return currentUser.value;
+  if (sessionRequest) {
+    const pending = await sessionRequest;
+    if (!force || sessionRequestForce) return pending;
+  }
+
+  sessionRequestForce = force;
+  sessionRequest = (async () => {
+    try {
+      const res = await request("/api/auth/me");
+      if (!res.ok) {
+        currentUser.value = null;
+        sessionChecked = true;
+        return null;
+      }
+      const json = (await res.json()) as {
+        data?: AuthUser | { user?: AuthUser };
+      };
+      const data = json.data;
+      if (data && "id" in data) {
+        currentUser.value = data;
+      } else {
+        currentUser.value = data?.user ?? null;
+      }
+      return currentUser.value;
+    } catch {
+      // 网络故障不等于会话失效：已登录页面保留当前用户，由具体数据请求展示错误态。
+      return currentUser.value;
+    } finally {
+      sessionRequest = null;
+    }
+  })();
+  return sessionRequest;
+}
+
+export async function login(email: string, password: string): Promise<AuthUser> {
+  const res = await request("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    data?: { user: AuthUser };
+    error?: string;
+  };
+  if (!res.ok || !json.data) {
+    throw new ApiError(json.error ?? `登录失败（${res.status}）`, res.status);
+  }
+  currentUser.value = json.data.user;
+  sessionChecked = true;
+  return json.data.user;
+}
+
+export async function logout(): Promise<void> {
+  const res = await request("/api/auth/logout", { method: "POST" });
+  if (!res.ok && res.status !== 401) throw await responseError(res, "退出失败");
+  currentUser.value = null;
+  sessionChecked = true;
 }
 
 export async function fetchSkills(): Promise<SkillCard[]> {
@@ -33,85 +161,35 @@ export async function fetchSkills(): Promise<SkillCard[]> {
 }
 
 export async function fetchSkillDetail(slug: string): Promise<SkillDetail> {
-  const json = await get<{ data: SkillDetail }>(`/api/skills/${slug}`);
+  const json = await get<{ data: SkillDetail }>(`/api/skills/${encodeURIComponent(slug)}`);
   return json.data;
 }
 
-// ---------- 登录态（localStorage 持久化，7 天有效） ----------
-
-const AUTH_KEY = "skillhive-auth";
-
-export interface AuthUser {
-  id: string;
-  email: string;
-  name: string;
-  role: "admin" | "publisher" | "member";
+/** 只在用户选择预览时读取一个技能资源文件。 */
+export async function fetchSkillFile(
+  slug: string,
+  path: string,
+  version: string,
+): Promise<SkillFile> {
+  const query = new URLSearchParams({ version, path });
+  const json = await get<{ data: SkillFile }>(
+    `/api/skills/${encodeURIComponent(slug)}/file?${query.toString()}`,
+  );
+  return json.data;
 }
 
-export function getAuth(): { token: string; user: AuthUser } | null {
-  try {
-    const raw = localStorage.getItem(AUTH_KEY);
-    return raw ? (JSON.parse(raw) as { token: string; user: AuthUser }) : null;
-  } catch {
-    return null;
-  }
-}
-
-export function clearAuth(): void {
-  localStorage.removeItem(AUTH_KEY);
-}
-
-/** 构造带登录态的请求头（未登录为空对象） */
-function authHeaders(): Record<string, string> {
-  const auth = getAuth();
-  return auth ? { Authorization: `Bearer ${auth.token}` } : {};
-}
-
-/** 401 统一处理：清除失效登录态并跳转登录页（带上回跳地址） */
-function handleUnauthorized(res: Response): void {
-  if (res.status === 401 && location.pathname !== "/login") {
-    clearAuth();
-    const redirect = encodeURIComponent(location.pathname + location.search);
-    location.href = `/login?redirect=${redirect}`;
-  }
-}
-
-/** 邮箱 + 密码登录，成功则保存登录态并返回用户 */
-export async function login(email: string, password: string): Promise<AuthUser> {
-  const res = await fetch("/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
-  const json = (await res.json().catch(() => ({}))) as {
-    data?: { token: string; user: AuthUser };
-    error?: string;
-  };
-  if (!res.ok || !json.data) throw new Error(json.error ?? `登录失败（${res.status}）`);
-  localStorage.setItem(AUTH_KEY, JSON.stringify(json.data));
-  return json.data.user;
-}
-
-/** 发布 skill（SKILL.md 全文 + 可选资源文件，需登录且具备 publisher/admin 角色） */
 export async function publishSkill(
   content: string,
   changelog: string,
   files: { path: string; contentBase64: string }[] = [],
 ): Promise<void> {
-  const auth = getAuth();
-  const res = await fetch("/api/skills/publish", {
+  const res = await request("/api/skills/publish", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(auth ? { Authorization: `Bearer ${auth.token}` } : {}),
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content, changelog, files }),
   });
-  if (!res.ok) {
-    handleUnauthorized(res); // 401 时清除登录态并跳登录页
-    const json = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(json.error ?? `发布失败（${res.status}）`);
-  }
+  handleUnauthorized(res);
+  if (!res.ok) throw await responseError(res, "发布失败");
 }
 
 // ---------- 个人接入令牌（PAT） ----------
@@ -124,48 +202,42 @@ export interface PatInfo {
   revoked: boolean;
 }
 
-/** 列出我的接入令牌 */
 export async function fetchTokens(): Promise<PatInfo[]> {
   const json = await get<{ data: PatInfo[] }>("/api/auth/tokens");
   return json.data;
 }
 
-/** 生成接入令牌（明文仅此一次返回） */
 export async function createToken(name: string): Promise<{ id: string; token: string }> {
-  const res = await fetch("/api/auth/tokens", {
+  const res = await request("/api/auth/tokens", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
   });
   handleUnauthorized(res);
-  if (!res.ok) {
-    const json = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(json.error ?? `生成失败（${res.status}）`);
-  }
+  if (!res.ok) throw await responseError(res, "生成失败");
   const json = (await res.json()) as { data: { id: string; token: string } };
   return json.data;
 }
 
-/** 吊销接入令牌 */
 export async function revokeToken(id: string): Promise<void> {
-  const res = await fetch(`/api/auth/tokens/${id}`, {
+  const res = await request(`/api/auth/tokens/${encodeURIComponent(id)}`, {
     method: "DELETE",
-    headers: authHeaders(),
   });
   handleUnauthorized(res);
-  if (!res.ok) {
-    const json = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(json.error ?? `吊销失败（${res.status}）`);
-  }
+  if (!res.ok) throw await responseError(res, "吊销失败");
 }
 
-/** 埋点上报（fire-and-forget） */
-export function reportEvent(slug: string, event: "view" | "favorite" | "rate"): void {
-  void fetch(`/api/skills/${slug}/events`, {
+/** 埋点上报（失败不会打断主流程）。 */
+export function reportEvent(
+  slug: string,
+  event: "view" | "favorite" | "rate",
+  score?: number,
+): void {
+  void request(`/api/skills/${encodeURIComponent(slug)}/events`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ event, client: "console" }),
-  }).catch(() => {});
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ event, client: "console", ...(score === undefined ? {} : { score }) }),
+  }).then(handleUnauthorized).catch(() => undefined);
 }
 
 // ---------- 数据看板 ----------
@@ -197,31 +269,18 @@ export interface TrendPoint {
 }
 
 export async function fetchStatsOverview(): Promise<StatsOverview> {
-  const json = await get<{ data: StatsOverview }>("/api/stats/overview");
-  return json.data;
+  return (await get<{ data: StatsOverview }>("/api/stats/overview")).data;
 }
 
 export async function fetchSkillStats(): Promise<SkillStats[]> {
-  const json = await get<{ data: SkillStats[] }>("/api/stats/skills");
-  return json.data;
+  return (await get<{ data: SkillStats[] }>("/api/stats/skills")).data;
 }
 
 export async function fetchTrend(days = 14): Promise<TrendPoint[]> {
-  const json = await get<{ data: TrendPoint[] }>(`/api/stats/trend?days=${days}`);
-  return json.data;
+  return (await get<{ data: TrendPoint[] }>(`/api/stats/trend?days=${days}`)).data;
 }
 
 // ---------- 需求许愿 ----------
-
-/** 浏览器指纹令牌（无登录体系的过渡方案，存 localStorage） */
-export function getVoterToken(): string {
-  let token = localStorage.getItem("skillhive-voter");
-  if (!token) {
-    token = crypto.randomUUID();
-    localStorage.setItem("skillhive-voter", token);
-  }
-  return token;
-}
 
 export type RequestStatus = "open" | "planned" | "done" | "rejected";
 
@@ -237,37 +296,28 @@ export interface SkillRequest {
 }
 
 export async function fetchRequests(): Promise<SkillRequest[]> {
-  const json = await get<{ data: SkillRequest[] }>(
-    `/api/requests?voterToken=${getVoterToken()}`,
-  );
-  return json.data;
+  return (await get<{ data: SkillRequest[] }>("/api/requests")).data;
 }
 
 export async function createRequest(input: {
   title: string;
   description: string;
-  nickname: string;
 }): Promise<void> {
-  const res = await fetch("/api/requests", {
+  const res = await request("/api/requests", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ ...input, voterToken: getVoterToken() }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
   });
   handleUnauthorized(res);
-  if (!res.ok) {
-    const json = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(json.error ?? `提交失败（${res.status}）`);
-  }
+  if (!res.ok) throw await responseError(res, "提交失败");
 }
 
 export async function toggleVote(id: string): Promise<{ voted: boolean; votes: number }> {
-  const res = await fetch(`/api/requests/${id}/vote`, {
+  const res = await request(`/api/requests/${encodeURIComponent(id)}/vote`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ voterToken: getVoterToken() }),
   });
   handleUnauthorized(res);
-  if (!res.ok) throw new Error(`投票失败（${res.status}）`);
+  if (!res.ok) throw await responseError(res, "投票失败");
   const json = (await res.json()) as { data: { voted: boolean; votes: number } };
   return json.data;
 }

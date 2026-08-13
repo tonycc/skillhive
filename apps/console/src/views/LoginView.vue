@@ -19,7 +19,8 @@ async function onSubmit(): Promise<void> {
   try {
     const user = await login(form.email, form.password);
     ElMessage.success(`欢迎，${user.name}`);
-    const redirect = typeof route.query.redirect === "string" ? route.query.redirect : "/";
+    const candidate = typeof route.query.redirect === "string" ? route.query.redirect : "/";
+    const redirect = candidate.startsWith("/") && !candidate.startsWith("//") ? candidate : "/";
     router.push(redirect);
   } catch (err) {
     ElMessage.error((err as Error).message);
@@ -32,7 +33,7 @@ async function onSubmit(): Promise<void> {
 <template>
   <div style="display: flex; justify-content: center; padding-top: 64px">
     <el-card style="width: 400px">
-      <h2 style="margin: 0 0 8px; text-align: center">🐝 SkillHive 技能蜂巢</h2>
+      <h1 class="login-title">🐝 SkillHive 技能蜂巢</h1>
       <p
         style="
           margin: 0 0 24px;
@@ -43,13 +44,12 @@ async function onSubmit(): Promise<void> {
       >
         请使用公司账号登录，账号由 IT 管理员创建
       </p>
-      <el-form label-position="top" @submit.prevent>
+      <el-form label-position="top" @submit.prevent="onSubmit">
         <el-form-item label="账号">
           <el-input
             v-model="form.email"
             placeholder="邮箱或用户名"
             autofocus
-            @keyup.enter="onSubmit"
           />
         </el-form-item>
         <el-form-item label="密码">
@@ -57,14 +57,13 @@ async function onSubmit(): Promise<void> {
             v-model="form.password"
             type="password"
             show-password
-            @keyup.enter="onSubmit"
           />
         </el-form-item>
         <el-button
           type="primary"
           style="width: 100%"
           :loading="submitting"
-          @click="onSubmit"
+          native-type="submit"
         >
           登录
         </el-button>
@@ -72,3 +71,11 @@ async function onSubmit(): Promise<void> {
     </el-card>
   </div>
 </template>
+
+<style scoped>
+.login-title {
+  margin: 0 0 8px;
+  text-align: center;
+  font-size: 24px;
+}
+</style>

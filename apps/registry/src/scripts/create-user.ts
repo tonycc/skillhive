@@ -1,5 +1,5 @@
-import { eq } from "drizzle-orm";
-import { db, users } from "@skillhive/db";
+import { and, eq, isNull, sql } from "drizzle-orm";
+import { db, users, userTokens } from "@skillhive/db";
 import { hashPassword } from "../auth.js";
 
 /**
@@ -9,7 +9,7 @@ import { hashPassword } from "../auth.js";
  *   pnpm --filter @skillhive/registry create-user -- \
  *     --email it@example.com --name 张三 --password '强密码' --role admin
  *
- * 邮箱已存在时更新其密码与角色（可用于重置密码）。
+ * 邮箱已存在时更新其密码与角色（可用于重置密码）；--disable / --enable 管理停用状态。
  */
 
 function parseArgs(argv: string[]): Record<string, string> {
@@ -17,47 +17,93 @@ function parseArgs(argv: string[]): Record<string, string> {
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i];
     if (!key || key === "--" || !key.startsWith("--")) continue;
-    args[key.slice(2)] = argv[i + 1] ?? "";
-    i++;
+    const next = argv[i + 1];
+    if (!next || next.startsWith("--")) {
+      args[key.slice(2)] = "true";
+    } else {
+      args[key.slice(2)] = next;
+      i++;
+    }
   }
   return args;
 }
 
 const args = parseArgs(process.argv.slice(2));
-const { email, name, password, role = "publisher" } = args;
+const { email, name, role = "publisher" } = args;
+const password = args.password || process.env.SKILLHIVE_ADMIN_PASSWORD || "";
+const disable = args.disable === "true";
+const enable = args.enable === "true";
 
-if (!email || !name || !password) {
-  console.error("用法：create-user --email <邮箱> --name <姓名> --password <密码> [--role admin|publisher|member]");
+if (disable && enable) {
+  console.error("--disable 与 --enable 不能同时使用");
   process.exit(1);
 }
-if (!["admin", "publisher", "member"].includes(role)) {
+if (!email || (!disable && !enable && (!name || !password))) {
+  console.error(
+    "用法：SKILLHIVE_ADMIN_PASSWORD=<密码> create-user --email <邮箱> --name <姓名> [--role admin|publisher|member]\n" +
+    "停用/启用：create-user --email <邮箱> --disable|--enable\n" +
+    "也兼容本地手工使用 --password，但生产环境建议通过环境变量提供，避免暴露在进程列表中。",
+  );
+  process.exit(1);
+}
+if (!disable && !enable && !["admin", "publisher", "member"].includes(role)) {
   console.error(`非法角色：${role}（可选 admin / publisher / member）`);
   process.exit(1);
 }
-if (password.length < 6) {
-  console.error("密码长度至少 6 位");
+if (!disable && !enable && password.length < 12) {
+  console.error("密码长度至少 12 位");
   process.exit(1);
 }
-if (password.length < 8) {
-  console.warn("⚠️ 密码少于 8 位，仅建议在本地/试点环境使用，正式部署请使用强密码");
+
+const normalizedEmail = email.toLowerCase();
+const existing = await db.query.users.findFirst({ where: eq(users.email, normalizedEmail) });
+
+if (disable || enable) {
+  if (!existing) {
+    console.error(`账号不存在：${normalizedEmail}`);
+    process.exit(1);
+  }
+  await db.transaction(async (tx) => {
+    await tx
+      .update(users)
+      .set({
+        disabledAt: disable ? new Date() : null,
+        sessionVersion: sql`${users.sessionVersion} + 1`,
+      })
+      .where(eq(users.id, existing.id));
+    if (disable) {
+      // 服务端 API 会额外通知 MCP；离线脚本仍保证 PAT 数据层立即失效。
+      await tx
+        .update(userTokens)
+        .set({ revokedAt: new Date() })
+        .where(and(eq(userTokens.userId, existing.id), isNull(userTokens.revokedAt)));
+    }
+  });
+  console.log(`✓ 已${disable ? "停用" : "启用"}账号：${normalizedEmail}，旧会话已失效`);
+  process.exit(0);
 }
 
 const passwordHash = await hashPassword(password);
-const existing = await db.query.users.findFirst({ where: eq(users.email, email) });
 
 if (existing) {
   await db
     .update(users)
-    .set({ passwordHash, name, role: role as "admin" | "publisher" | "member" })
-    .where(eq(users.email, email));
-  console.log(`✓ 已更新账号：${email}（${role}）`);
+    .set({
+      passwordHash,
+      name,
+      role: role as "admin" | "publisher" | "member",
+      disabledAt: null,
+      sessionVersion: sql`${users.sessionVersion} + 1`,
+    })
+    .where(eq(users.email, normalizedEmail));
+  console.log(`✓ 已更新账号：${normalizedEmail}（${role}），旧登录会话已失效`);
 } else {
   await db.insert(users).values({
-    email,
+    email: normalizedEmail,
     name,
     passwordHash,
     role: role as "admin" | "publisher" | "member",
   });
-  console.log(`✓ 已创建账号：${email}（${role}）`);
+  console.log(`✓ 已创建账号：${normalizedEmail}（${role}）`);
 }
 process.exit(0);

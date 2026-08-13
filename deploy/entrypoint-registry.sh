@@ -11,9 +11,8 @@ if [ -n "$SKILLHIVE_ADMIN_EMAIL" ] && [ -n "$SKILLHIVE_ADMIN_PASSWORD" ]; then
   pnpm --filter @skillhive/registry create-user \
     --email "$SKILLHIVE_ADMIN_EMAIL" \
     --name "${SKILLHIVE_ADMIN_NAME:-管理员}" \
-    --password "$SKILLHIVE_ADMIN_PASSWORD" \
     --role admin
 fi
 
 echo "[entrypoint] 启动 Registry…"
-exec pnpm --filter @skillhive/registry exec tsx src/index.ts
+exec node apps/registry/dist/index.js

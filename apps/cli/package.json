@@ -4,11 +4,12 @@
   "private": true,
   "type": "module",
   "bin": {
-    "skillhive": "./src/index.ts"
+    "skillhive": "./dist/index.js"
   },
   "scripts": {
-    "dev": "tsx --env-file-if-exists=../../.env src/index.ts",
+    "dev": "tsx --conditions=development --env-file-if-exists=../../.env src/index.ts",
     "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

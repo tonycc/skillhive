@@ -1,5 +1,6 @@
 # 依赖
 node_modules/
+.pnpm-store/
 
 # 构建产物
 dist/
@@ -13,6 +14,7 @@ out/
 
 # 日志
 *.log
+coverage/
 
 # 系统文件
 .DS_Store

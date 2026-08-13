@@ -1,17 +1,10 @@
-import { randomBytes, scrypt, timingSafeEqual, createHash } from "node:crypto";
+import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import type { Context, MiddlewareHandler } from "hono";
+import { getCookie } from "hono/cookie";
 import { sign, verify } from "hono/jwt";
-
-/**
- * 登录鉴权模块。
- *
- * - 账号：users 表（email + scrypt 密码哈希 + 角色）
- * - 会话：JWT（HS256，7 天有效期），密钥取 SKILLHIVE_SESSION_SECRET；
- *   未配置时每次启动随机生成（重启即全部会话失效），正式部署必须配置
- * - 保护范围：发布/管理接口要求 publisher 或 admin 角色；
- *   读取路径（市场浏览、MCP 机器通道）保持公开
- */
+import { eq } from "drizzle-orm";
+import { db, users } from "@skillhive/db";
 
 const scryptAsync = promisify(scrypt);
 
@@ -41,29 +34,36 @@ export interface SessionUser {
   email: string;
   name: string;
   role: "admin" | "publisher" | "member";
+  departmentId: string | null;
 }
 
-const SESSION_TTL_SECONDS = 7 * 24 * 3600; // 7 天
+export const SESSION_COOKIE_NAME = "skillhive_session";
+export const SESSION_TTL_SECONDS = 7 * 24 * 3600;
 
-const SESSION_SECRET =
-  process.env.SKILLHIVE_SESSION_SECRET ??
-  (() => {
-    const generated = randomBytes(32).toString("hex");
-    console.warn(
-      "[skillhive] ⚠️ 未配置 SKILLHIVE_SESSION_SECRET，已生成临时密钥（重启后所有登录态失效，正式部署必须配置）",
-    );
-    return generated;
-  })();
+function loadSessionSecret(): string {
+  const configured = process.env.SKILLHIVE_SESSION_SECRET?.trim();
+  if (configured && configured.length >= 32) return configured;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("生产环境必须配置至少 32 个字符的 SKILLHIVE_SESSION_SECRET");
+  }
+  const generated = randomBytes(32).toString("hex");
+  console.warn(
+    configured
+      ? "[skillhive] SKILLHIVE_SESSION_SECRET 少于 32 个字符，开发环境已改用临时密钥"
+      : "[skillhive] 未配置 SKILLHIVE_SESSION_SECRET，开发环境已生成临时密钥（重启后登录态失效）",
+  );
+  return generated;
+}
 
-/** 为用户签发会话令牌 */
-export async function issueToken(user: SessionUser): Promise<string> {
+const SESSION_SECRET = loadSessionSecret();
+
+/** 为用户签发会话令牌；sessionVersion 变更会使旧令牌立即失效。 */
+export async function issueToken(user: SessionUser, sessionVersion: number): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   return sign(
     {
       sub: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
+      ver: sessionVersion,
       iat: now,
       exp: now + SESSION_TTL_SECONDS,
     },
@@ -71,36 +71,40 @@ export async function issueToken(user: SessionUser): Promise<string> {
   );
 }
 
-/** 从请求头解析并校验会话令牌，无效返回 null */
-async function resolveSession(c: Context): Promise<SessionUser | null> {
+/** 从 Bearer 或 HttpOnly Cookie 解析会话，并从数据库刷新角色、部门与有效状态。 */
+export async function resolveSession(c: Context): Promise<SessionUser | null> {
   const header = c.req.header("Authorization") ?? "";
-  const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
+  const token = header.startsWith("Bearer ")
+    ? header.slice("Bearer ".length).trim()
+    : getCookie(c, SESSION_COOKIE_NAME) ?? "";
   if (!token) return null;
+
   try {
     const payload = await verify(token, SESSION_SECRET, "HS256");
-    if (typeof payload.sub !== "string") return null;
+    if (typeof payload.sub !== "string" || typeof payload.ver !== "number") return null;
+    const user = await db.query.users.findFirst({ where: eq(users.id, payload.sub) });
+    if (!user || user.disabledAt !== null || user.sessionVersion !== payload.ver) return null;
     return {
-      id: payload.sub,
-      email: String(payload.email ?? ""),
-      name: String(payload.name ?? ""),
-      role: payload.role as SessionUser["role"],
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      departmentId: user.departmentId,
     };
   } catch {
     return null;
   }
 }
 
-/** 要求已登录（任意角色），会话用户写入 c.set("user") */
+/** 要求已登录（任意角色），会话用户写入 c.set("user")。 */
 export const requireAuth: MiddlewareHandler = async (c, next) => {
   const user = await resolveSession(c);
-  if (!user) {
-    return c.json({ error: "未登录或登录已过期（请先登录）" }, 401);
-  }
+  if (!user) return c.json({ error: "未登录或登录已过期（请先登录）" }, 401);
   c.set("user", user);
   return next();
 };
 
-/** 要求 publisher 或 admin 角色（发布/管理接口） */
+/** 要求 publisher 或 admin 角色（发布/管理接口）。 */
 export const requirePublisher: MiddlewareHandler = async (c, next) => {
   const user = await resolveSession(c);
   if (!user) {
@@ -113,9 +117,18 @@ export const requirePublisher: MiddlewareHandler = async (c, next) => {
   return next();
 };
 
+/** 要求 admin 角色（账号与系统管理接口）。 */
+export const requireAdmin: MiddlewareHandler = async (c, next) => {
+  const user = await resolveSession(c);
+  if (!user) return c.json({ error: "未登录或登录已过期（请先登录）" }, 401);
+  if (user.role !== "admin") return c.json({ error: "无管理员权限" }, 403);
+  c.set("user", user);
+  return next();
+};
+
 // ---------- 个人接入令牌（PAT，供 MCP 客户端鉴权） ----------
 
-/** PAT 明文格式：sk- + 48 位 hex（高嫡机随机，sha256 哈希存储即可） */
+/** PAT 明文格式：sk- + 48 位 hex（高熵随机值，sha256 哈希存储即可）。 */
 export function generatePat(): { token: string; hash: string } {
   const token = `sk-${randomBytes(24).toString("hex")}`;
   return { token, hash: hashPat(token) };
@@ -127,13 +140,27 @@ export function hashPat(token: string): string {
 
 // ---------- 服务间内部接口鉴权 ----------
 
-const INTERNAL_TOKEN = process.env.SKILLHIVE_INTERNAL_TOKEN;
+function configuredInternalToken(): string | null {
+  const value = process.env.SKILLHIVE_INTERNAL_TOKEN?.trim();
+  return value && value.length >= 32 ? value : null;
+}
 
-/** 内部接口（MCP Server 调用）：校验 X-SkillHive-Internal-Token；未配置 = 开发模式放行 */
+if (process.env.NODE_ENV === "production" && !configuredInternalToken()) {
+  throw new Error("生产环境必须配置至少 32 个字符的 SKILLHIVE_INTERNAL_TOKEN");
+}
+
+function constantTimeEqual(left: string, right: string): boolean {
+  const leftDigest = createHash("sha256").update(left).digest();
+  const rightDigest = createHash("sha256").update(right).digest();
+  return timingSafeEqual(leftDigest, rightDigest);
+}
+
+/** 内部接口恒为 fail-closed；未配置有效共享密钥时不会放行。 */
 export const requireInternalToken: MiddlewareHandler = async (c, next) => {
-  if (!INTERNAL_TOKEN) return next();
-  if (c.req.header("X-SkillHive-Internal-Token") !== INTERNAL_TOKEN) {
-    return c.json({ error: "未授权的内部调用（缺少或错误的内部令牌）" }, 401);
+  const expected = configuredInternalToken();
+  const supplied = c.req.header("X-SkillHive-Internal-Token") ?? "";
+  if (!expected || !supplied || !constantTimeEqual(supplied, expected)) {
+    return c.json({ error: "未授权的内部调用（内部令牌未配置或不匹配）" }, 401);
   }
   return next();
 };

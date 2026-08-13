@@ -1,62 +1,124 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import {
   db,
-  skills,
-  skillVersions,
-  skillVersionFiles,
   departments,
   skillDepartmentVisibility,
+  skills,
+  skillVersionFiles,
+  skillVersions,
   usageEvents,
+  userTokens,
+  users,
 } from "@skillhive/db";
-import { and, eq, desc, inArray } from "drizzle-orm";
-import { parseSkillMd, validateResourceFiles } from "@skillhive/skill-schema";
-import { requirePublisher, type SessionUser } from "../auth.js";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import {
+  parseSkillMd,
+  validateResourceFiles,
+  validateResourcePath,
+} from "@skillhive/skill-schema";
+import {
+  requireAuth,
+  requireInternalToken,
+  requirePublisher,
+  type SessionUser,
+} from "../auth.js";
+import { consumeRateLimit } from "../security.js";
 
-/** 版本冲突时抛出，用于在事务外映射为 409 */
 class VersionConflictError extends Error {
-  constructor(
-    public readonly slug: string,
-    public readonly version: string,
-  ) {
+  constructor(public readonly slug: string, public readonly version: string) {
     super(`skill "${slug}" 的版本 ${version} 已存在，请提升版本号后重新发布`);
   }
 }
 
-/** MCP Server 内部接口地址（发布/下架后触发 prompts/list_changed 广播） */
+class PublishForbiddenError extends Error {}
+
 const MCP_SERVER_URL = process.env.MCP_SERVER_URL ?? "http://localhost:3100";
 
-/** 服务间内部接口共享密钥（与 MCP Server 侧配置一致） */
-const INTERNAL_TOKEN = process.env.SKILLHIVE_INTERNAL_TOKEN;
-
-/**
- * 通知 MCP Server 刷新所有活跃会话的 skill prompts（fire-and-forget）。
- * 通知失败不影响发布结果——客户端下次新建连接仍会拿到最新列表。
- */
 function notifyPromptsChanged(): void {
+  const internalToken = process.env.SKILLHIVE_INTERNAL_TOKEN?.trim();
+  if (!internalToken) return;
   void fetch(`${MCP_SERVER_URL}/internal/prompts-changed`, {
     method: "POST",
-    headers: INTERNAL_TOKEN ? { "X-SkillHive-Internal-Token": INTERNAL_TOKEN } : {},
-  })
-    .then((res) => {
-      if (!res.ok) {
-        console.warn(`[skillhive] 通知 MCP Server 返回 ${res.status}（检查内部令牌配置是否一致）`);
-      }
-    })
-    .catch((err) => {
-      console.warn(
-        "[skillhive] 通知 MCP Server 失败（不影响本次发布）：",
-        err instanceof Error ? err.message : err,
-      );
-    });
+    headers: { "X-SkillHive-Internal-Token": internalToken },
+    signal: AbortSignal.timeout(3_000),
+  }).then((res) => {
+    if (!res.ok) console.warn(`[skillhive] 通知 MCP Server 返回 ${res.status}`);
+  }).catch((err: unknown) => {
+    console.warn("[skillhive] 通知 MCP Server 失败：", err instanceof Error ? err.message : err);
+  });
 }
 
-const app = new Hono<{ Variables: { user: SessionUser } }>();
+type AppEnv = { Variables: { user: SessionUser } };
+const app = new Hono<AppEnv>();
 
-/** GET /api/skills — 技能市场列表（按更新时间倒序） */
-app.get("/", async (c) => {
-  // TODO: 接入鉴权后按用户所在部门过滤可见性
+// 列表与内容都带用户/部门可见性，禁止共享缓存保存或串用响应。
+app.use("*", async (c, next) => {
+  await next();
+  c.header("Cache-Control", "private, no-store");
+});
+
+type SkillRow = typeof skills.$inferSelect;
+
+async function visibilityDepartmentIds(skillId: string): Promise<string[]> {
+  const rows = await db
+    .select({ departmentId: skillDepartmentVisibility.departmentId })
+    .from(skillDepartmentVisibility)
+    .where(eq(skillDepartmentVisibility.skillId, skillId));
+  return rows.map((row) => row.departmentId);
+}
+
+/** published 遵守部门范围；非发布内容仅 admin 或资源 owner publisher 可预览。 */
+async function canReadSkill(skill: SkillRow, user: SessionUser): Promise<boolean> {
+  if (skill.status !== "published") {
+    return user.role === "admin" || (user.role === "publisher" && skill.ownerId === user.id);
+  }
+  const departmentIds = await visibilityDepartmentIds(skill.id);
+  return departmentIds.length === 0
+    || (user.departmentId !== null && departmentIds.includes(user.departmentId));
+}
+
+/**
+ * 内部技能接口不仅验证服务间密钥，还绑定发起调用的 PAT。
+ * 这样 stdio 等长生命周期进程中的令牌一经吊销，下一个数据请求也会立即失败。
+ */
+async function resolveInternalCaller(c: Context<AppEnv>): Promise<SessionUser | null> {
+  const userId = c.req.header("X-SkillHive-User-Id") ?? "";
+  const tokenId = c.req.header("X-SkillHive-Token-Id") ?? "";
+  if (
+    !z.string().uuid().safeParse(userId).success
+    || !z.string().uuid().safeParse(tokenId).success
+  ) return null;
+
+  const [row] = await db
+    .select({
+      id: users.id,
+      email: users.email,
+      name: users.name,
+      role: users.role,
+      departmentId: users.departmentId,
+    })
+    .from(userTokens)
+    .innerJoin(users, eq(userTokens.userId, users.id))
+    .where(and(
+      eq(userTokens.id, tokenId),
+      eq(userTokens.userId, userId),
+      isNull(userTokens.revokedAt),
+      isNull(users.disabledAt),
+    ))
+    .limit(1);
+  if (!row) return null;
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    role: row.role,
+    departmentId: row.departmentId,
+  };
+}
+
+async function visiblePublishedSkills(user: SessionUser) {
   const list = await db
     .select({
       id: skills.id,
@@ -71,112 +133,243 @@ app.get("/", async (c) => {
     .from(skills)
     .where(eq(skills.status, "published"))
     .orderBy(desc(skills.updatedAt));
-  return c.json({ data: list });
-});
+  if (list.length === 0) return list;
 
-/** GET /api/skills/:slug — skill 详情（含最新版本内容与可见部门） */
-app.get("/:slug", async (c) => {
-  const slug = c.req.param("slug");
-
-  const skill = await db.query.skills.findFirst({
-    where: eq(skills.slug, slug),
+  const restrictions = await db
+    .select({
+      skillId: skillDepartmentVisibility.skillId,
+      departmentId: skillDepartmentVisibility.departmentId,
+    })
+    .from(skillDepartmentVisibility)
+    .where(inArray(skillDepartmentVisibility.skillId, list.map((skill) => skill.id)));
+  const bySkill = new Map<string, string[]>();
+  for (const row of restrictions) {
+    const values = bySkill.get(row.skillId) ?? [];
+    values.push(row.departmentId);
+    bySkill.set(row.skillId, values);
+  }
+  return list.filter((skill) => {
+    const restrictedTo = bySkill.get(skill.id) ?? [];
+    return restrictedTo.length === 0
+      || (user.departmentId !== null && restrictedTo.includes(user.departmentId));
   });
-  if (!skill) return c.json({ error: `skill "${slug}" 不存在` }, 404);
+}
 
-  // 最新版本
+async function skillDetail(slug: string, user: SessionUser) {
+  const skill = await db.query.skills.findFirst({ where: eq(skills.slug, slug) });
+  if (!skill) return { kind: "missing" as const };
+  if (!(await canReadSkill(skill, user))) return { kind: "forbidden" as const };
+
   const [latest] = await db
-    .select()
+    .select({
+      id: skillVersions.id,
+      version: skillVersions.version,
+      content: skillVersions.content,
+      changelog: skillVersions.changelog,
+      createdAt: skillVersions.createdAt,
+    })
     .from(skillVersions)
     .where(eq(skillVersions.skillId, skill.id))
     .orderBy(desc(skillVersions.createdAt))
     .limit(1);
-
-  // 最新版本的资源文件（scripts/ references/ assets/）
   const files = latest
     ? await db
         .select({
           path: skillVersionFiles.path,
-          contentBase64: skillVersionFiles.contentBase64,
           size: skillVersionFiles.size,
         })
         .from(skillVersionFiles)
         .where(eq(skillVersionFiles.versionId, latest.id))
     : [];
-
-  // 可见部门（空数组 = 全员可见）
   const visibility = await db
     .select({ name: departments.name })
     .from(skillDepartmentVisibility)
     .innerJoin(departments, eq(skillDepartmentVisibility.departmentId, departments.id))
     .where(eq(skillDepartmentVisibility.skillId, skill.id));
 
-  // 剥除 frontmatter，仅保留 Markdown 正文（供 Console 渲染 / MCP prompt 使用）
   let body = "";
+  let frontmatter: ReturnType<typeof parseSkillMd>["frontmatter"] | null = null;
   if (latest) {
     try {
-      body = parseSkillMd(latest.content).body;
+      const parsed = parseSkillMd(latest.content);
+      body = parsed.body;
+      frontmatter = parsed.frontmatter;
     } catch {
-      body = latest.content;
+      // 历史脏数据不应把未经解析的 frontmatter 当作用户可见正文下发。
+      body = "该历史版本的 SKILL.md 格式无效，请由负责人重新发布。";
     }
   }
-
-  return c.json({
+  return {
+    kind: "ok" as const,
     data: {
       ...skill,
       latestVersion: latest
         ? {
             version: latest.version,
-            content: latest.content,
             changelog: latest.changelog,
             body,
+            frontmatter,
             publishedAt: latest.createdAt,
             files,
           }
         : null,
-      visibleDepartments: visibility.map((v) => v.name),
+      visibleDepartments: visibility.map((item) => item.name),
     },
-  });
+  };
+}
+
+type SkillFileResult =
+  | { kind: "ok"; data: { version: string; path: string; size: number; contentBase64: string } }
+  | { kind: "invalid" | "missing" | "forbidden" };
+
+async function skillFile(
+  slug: string,
+  version: string,
+  path: string,
+  user: SessionUser,
+): Promise<SkillFileResult> {
+  if (!/^\d+\.\d+\.\d+$/.test(version) || version.length > 32) return { kind: "invalid" };
+  if (validateResourcePath(path)) return { kind: "invalid" };
+  const skill = await db.query.skills.findFirst({ where: eq(skills.slug, slug) });
+  if (!skill) return { kind: "missing" };
+  if (!(await canReadSkill(skill, user))) return { kind: "forbidden" };
+
+  const [selectedVersion] = await db
+    .select({ id: skillVersions.id })
+    .from(skillVersions)
+    .where(and(
+      eq(skillVersions.skillId, skill.id),
+      eq(skillVersions.version, version),
+    ))
+    .limit(1);
+  if (!selectedVersion) return { kind: "missing" };
+
+  const [file] = await db
+    .select({
+      path: skillVersionFiles.path,
+      size: skillVersionFiles.size,
+      contentBase64: skillVersionFiles.contentBase64,
+    })
+    .from(skillVersionFiles)
+    .where(and(
+      eq(skillVersionFiles.versionId, selectedVersion.id),
+      eq(skillVersionFiles.path, path),
+    ))
+    .limit(1);
+  return file ? { kind: "ok", data: { version, ...file } } : { kind: "missing" };
+}
+
+function fileResponse(c: Context<AppEnv>, result: SkillFileResult) {
+  switch (result.kind) {
+    case "invalid": return c.json({ error: "无效或缺失的资源版本/文件路径" }, 400);
+    case "forbidden": return c.json({ error: "无权读取该资源文件" }, 403);
+    case "missing": return c.json({ error: "资源文件不存在" }, 404);
+    case "ok": return c.json({ data: result.data });
+  }
+}
+
+function detailResponse(c: Context<AppEnv>, result: Awaited<ReturnType<typeof skillDetail>>, slug: string) {
+  if (result.kind === "missing") return c.json({ error: `skill "${slug}" 不存在` }, 404);
+  if (result.kind === "forbidden") return c.json({ error: "无权查看该 skill" }, 403);
+  return c.json({ data: result.data });
+}
+
+/** MCP 内部、按 PAT 所属实时用户过滤的列表与详情。 */
+app.get("/internal", requireInternalToken, async (c) => {
+  const user = await resolveInternalCaller(c);
+  if (!user) return c.json({ error: "内部调用身份或接入令牌已失效" }, 401);
+  return c.json({ data: await visiblePublishedSkills(user) });
 });
 
 const eventSchema = z.object({
-  /** 事件类型：view 浏览 / invoke 调用 / favorite 收藏 / rate 评分 */
   event: z.enum(["view", "invoke", "favorite", "rate"]),
-  /** 评分事件的分值（1-5） */
-  score: z.string().max(8).optional(),
-  /** 来源客户端，如 workbuddy / console / cli */
-  client: z.string().max(64).default("unknown"),
-  /** 调用者用户 ID（MCP Server 鉴权解析后携带） */
-  userId: z.string().uuid().optional(),
+  score: z.number().int().min(1).max(5).optional(),
+  client: z.string().trim().min(1).max(64).regex(/^[\w.-]+$/).default("unknown"),
+}).superRefine((value, ctx) => {
+  if (value.event === "rate" && value.score === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["score"], message: "评分事件必须提供 1-5 分" });
+  }
+  if (value.event !== "rate" && value.score !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["score"], message: "仅评分事件可提供 score" });
+  }
 });
 
-/** POST /api/skills/:slug/events — 埋点上报（MCP Server / Console 调用） */
-app.post("/:slug/events", zValidator("json", eventSchema), async (c) => {
-  const slug = c.req.param("slug");
+async function recordEvent(
+  c: Context<AppEnv>,
+  user: SessionUser,
+  slug: string,
+  payload: z.infer<typeof eventSchema>,
+) {
   const skill = await db.query.skills.findFirst({ where: eq(skills.slug, slug) });
   if (!skill) return c.json({ error: `skill "${slug}" 不存在` }, 404);
-
-  const { event, score, client, userId } = c.req.valid("json");
-  await db.insert(usageEvents).values({ skillId: skill.id, event, score, client, userId });
+  if (!(await canReadSkill(skill, user))) return c.json({ error: "无权访问该 skill" }, 403);
+  const rate = consumeRateLimit("skill-event", user.id, 120, 60_000);
+  if (!rate.allowed) {
+    c.header("Retry-After", String(rate.retryAfterSeconds));
+    return c.json({ error: "事件上报过于频繁" }, 429);
+  }
+  await db.insert(usageEvents).values({
+    skillId: skill.id,
+    event: payload.event,
+    score: payload.score === undefined ? null : String(payload.score),
+    client: payload.client,
+    userId: user.id,
+  });
   return c.json({ ok: true }, 201);
+}
+
+app.post(
+  "/internal/:slug/events",
+  requireInternalToken,
+  zValidator("json", eventSchema),
+  async (c) => {
+    const user = await resolveInternalCaller(c);
+    if (!user) return c.json({ error: "内部调用身份或接入令牌已失效" }, 401);
+    return recordEvent(c, user, c.req.param("slug"), c.req.valid("json"));
+  },
+);
+
+app.get("/internal/:slug/file", requireInternalToken, async (c) => {
+  const user = await resolveInternalCaller(c);
+  if (!user) return c.json({ error: "内部调用身份或接入令牌已失效" }, 401);
+  return fileResponse(
+    c,
+    await skillFile(
+      c.req.param("slug"),
+      c.req.query("version") ?? "",
+      c.req.query("path") ?? "",
+      user,
+    ),
+  );
 });
+
+app.get("/internal/:slug", requireInternalToken, async (c) => {
+  const user = await resolveInternalCaller(c);
+  if (!user) return c.json({ error: "内部调用身份或接入令牌已失效" }, 401);
+  const slug = c.req.param("slug");
+  return detailResponse(c, await skillDetail(slug, user), slug);
+});
+
+/** Console 技能市场列表（必须登录，published 且按部门过滤）。 */
+app.get("/", requireAuth, async (c) => c.json({ data: await visiblePublishedSkills(c.get("user")) }));
+
+/** Console 埋点：身份只从会话派生。 */
+app.post("/:slug/events", requireAuth, zValidator("json", eventSchema), async (c) =>
+  recordEvent(c, c.get("user"), c.req.param("slug"), c.req.valid("json")));
 
 const publishSchema = z.object({
-  /** SKILL.md 全文（含 frontmatter） */
-  content: z.string().min(1),
-  changelog: z.string().default(""),
-  /** 技能包资源文件（scripts/ references/ assets/），base64 编码 */
-  files: z
-    .array(z.object({ path: z.string(), contentBase64: z.string() }))
-    .max(20)
-    .default([]),
+  content: z.string().min(1).max(512 * 1024),
+  changelog: z.string().max(8 * 1024).default(""),
+  files: z.array(z.object({
+    path: z.string().min(1).max(512),
+    contentBase64: z.string().max(768 * 1024),
+  })).max(20).default([]),
 });
 
-/** POST /api/skills/publish — IT 发布新版本（需登录且具备 publisher/admin 角色） */
+/** POST /api/skills/publish — 发布新版本（publisher 只能管理自己的 slug，admin 可管理全部）。 */
 app.post("/publish", requirePublisher, zValidator("json", publishSchema), async (c) => {
   const publisher = c.get("user");
   const { content, changelog, files } = c.req.valid("json");
-
-  // 1. 校验 SKILL.md 格式
   let parsed;
   try {
     parsed = parseSkillMd(content);
@@ -184,13 +377,18 @@ app.post("/publish", requirePublisher, zValidator("json", publishSchema), async 
   } catch (err) {
     return c.json({ error: (err as Error).message }, 400);
   }
-
   const slug = parsed.frontmatter.name;
   const version = parsed.frontmatter.version ?? "0.1.0";
 
   try {
     const result = await db.transaction(async (tx) => {
-      // 3. upsert skill 主记录（已存在则更新摘要与分类，并置为 published）
+      // 同一 slug 串行发布，避免两个 publisher 同时首次创建时绕过 owner 检查。
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${slug}, 0))`);
+      const existing = await tx.query.skills.findFirst({ where: eq(skills.slug, slug) });
+      if (existing && publisher.role !== "admin" && existing.ownerId !== publisher.id) {
+        throw new PublishForbiddenError(`无权发布其他负责人管理的 skill "${slug}"`);
+      }
+
       const [skill] = await tx
         .insert(skills)
         .values({
@@ -212,82 +410,82 @@ app.post("/publish", requirePublisher, zValidator("json", publishSchema), async 
           },
         })
         .returning();
+      if (!skill) throw new Error("写入 skill 失败");
 
-      // 4. 版本号防重
-      const dup = await tx.query.skillVersions.findFirst({
-        where: and(
-          eq(skillVersions.skillId, skill.id),
-          eq(skillVersions.version, version),
-        ),
+      const duplicate = await tx.query.skillVersions.findFirst({
+        where: and(eq(skillVersions.skillId, skill.id), eq(skillVersions.version, version)),
       });
-      if (dup) throw new VersionConflictError(slug, version);
+      if (duplicate) throw new VersionConflictError(slug, version);
 
-      // 5. 写入新版本
       const [skillVersion] = await tx
         .insert(skillVersions)
         .values({ skillId: skill.id, version, content, changelog, publishedBy: publisher.id })
         .returning();
+      if (!skillVersion) throw new Error("写入 skill 版本失败");
 
-      // 5.1 写入技能包资源文件（如有）
       if (files.length > 0) {
-        await tx.insert(skillVersionFiles).values(
-          files.map((f) => ({
-            versionId: skillVersion.id,
-            path: f.path,
-            contentBase64: f.contentBase64,
-            size: Math.ceil((f.contentBase64.length * 3) / 4),
-          })),
-        );
+        await tx.insert(skillVersionFiles).values(files.map((file) => ({
+          versionId: skillVersion.id,
+          path: file.path,
+          contentBase64: file.contentBase64,
+          size: decodedBase64Size(file.contentBase64),
+        })));
       }
 
-      // 6. 更新部门可见性：缺省 = 全员可见（清空限制）
-      await tx
-        .delete(skillDepartmentVisibility)
-        .where(eq(skillDepartmentVisibility.skillId, skill.id));
-
-      const deptNames = parsed.frontmatter.departments ?? [];
-      if (deptNames.length > 0) {
-        // 部门不存在则自动创建（MVP 简化；正式版应来自企业微信组织架构同步）
-        await tx
-          .insert(departments)
-          .values(deptNames.map((name) => ({ name })))
+      await tx.delete(skillDepartmentVisibility).where(eq(skillDepartmentVisibility.skillId, skill.id));
+      const departmentNames = parsed.frontmatter.departments ?? [];
+      if (departmentNames.length > 0) {
+        await tx.insert(departments).values(departmentNames.map((name) => ({ name })))
           .onConflictDoNothing({ target: departments.name });
-
-        const deptRows = await tx
-          .select({ id: departments.id })
-          .from(departments)
-          .where(inArray(departments.name, deptNames));
-
-        if (deptRows.length > 0) {
-          await tx.insert(skillDepartmentVisibility).values(
-            deptRows.map((d) => ({ skillId: skill.id, departmentId: d.id })),
-          );
-        }
+        const departmentRows = await tx.select({ id: departments.id }).from(departments)
+          .where(inArray(departments.name, departmentNames));
+        if (departmentRows.length !== departmentNames.length) throw new Error("部门可见性写入不完整");
+        await tx.insert(skillDepartmentVisibility).values(departmentRows.map((department) => ({
+          skillId: skill.id,
+          departmentId: department.id,
+        })));
       }
-
       return { skill, skillVersion };
     });
 
-    // 7. 通知 MCP Server 向活跃会话推送 prompts/list_changed（失败不影响发布）
     notifyPromptsChanged();
-
-    return c.json(
-      {
-        data: {
-          slug: result.skill.slug,
-          version: result.skillVersion.version,
-          status: result.skill.status,
-        },
-      },
-      201,
-    );
+    return c.json({
+      data: { slug: result.skill.slug, version: result.skillVersion.version, status: result.skill.status },
+    }, 201);
   } catch (err) {
-    if (err instanceof VersionConflictError) {
-      return c.json({ error: err.message }, 409);
-    }
+    if (err instanceof VersionConflictError) return c.json({ error: err.message }, 409);
+    if (err instanceof PublishForbiddenError) return c.json({ error: err.message }, 403);
+    if (isUniqueViolation(err)) return c.json({ error: `skill "${slug}" 的版本 ${version} 已存在` }, 409);
     console.error("发布失败：", err);
     return c.json({ error: "服务器内部错误" }, 500);
   }
 });
+
+/** Console 详情：必须登录；对非 published 内容应用管理预览规则。 */
+app.get("/:slug/file", requireAuth, async (c) => fileResponse(
+  c,
+  await skillFile(
+    c.req.param("slug"),
+    c.req.query("version") ?? "",
+    c.req.query("path") ?? "",
+    c.get("user"),
+  ),
+));
+
+app.get("/:slug", requireAuth, async (c) => {
+  const slug = c.req.param("slug");
+  return detailResponse(c, await skillDetail(slug, c.get("user")), slug);
+});
+
+function decodedBase64Size(value: string): number {
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return value.length / 4 * 3 - padding;
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const value = error as { code?: string; cause?: { code?: string } };
+  return value.code === "23505" || value.cause?.code === "23505";
+}
 
 export default app;

@@ -1,9 +1,11 @@
 node_modules
+.pnpm-store
 dist
 .git
 .github
 .env
 *.log
+coverage
 data/
 docs/internal
 .DS_Store
