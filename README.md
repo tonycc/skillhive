@@ -103,9 +103,9 @@ Registry 或 MCP 的容器端口直接暴露到不受信网络。
 
 registry 首次启动会自动执行数据库迁移；在 `.env` 中设置 `SKILLHIVE_ADMIN_EMAIL` / `SKILLHIVE_ADMIN_PASSWORD` 可引导创建管理员账号（验证后建议移除）。
 
-## 自动部署（GitHub Actions → 阿里云）
+## 自动部署（GitHub Actions → 阿里云 ECS）
 
-推送 `main` 分支即自动部署：质量门禁（lint/test/build）→ 构建镜像推送阿里云容器镜像服务（ACR）→ SSH 到 ECS 拉取重启。工作流见 `.github/workflows/deploy.yml`，需在仓库 Secrets 配置 ACR 凭证与 ECS SSH 信息（详见文件头注释），服务器按上一节完成一次性准备即可。
+推送 `main` 分支即自动部署：质量门禁（lint/test/build）→ 构建镜像打包 → SCP 直传服务器 → `docker load` 后重启。工作流见 `.github/workflows/deploy.yml`，不依赖镜像仓库，只需在仓库 Secrets 配置 `ECS_HOST` / `ECS_USER` / `ECS_SSH_KEY` 三项（详见文件头注释），服务器按上一节完成一次性准备即可。
 管理员可通过 `PATCH /api/auth/users/:id/status`（请求体 `{ "disabled": true }`）停用账号；
 也可在服务器上运行 `pnpm --filter @skillhive/registry create-user -- --email <账号> --disable`
 执行离线停用。停用会立即失效登录会话并吊销该账号的全部 PAT；使用 `--enable` 可重新启用，
