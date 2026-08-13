@@ -30,10 +30,15 @@ const loginSchema = z.object({
 
 const sessionModeSchema = z.enum(["cookie", "bearer"]);
 
+// 生产环境默认要求 HTTPS（Secure Cookie）；试运营无证书时用 SKILLHIVE_ALLOW_HTTP=1 显式放宽
+function secureCookie(): boolean {
+  return process.env.NODE_ENV === "production" && process.env.SKILLHIVE_ALLOW_HTTP !== "1";
+}
+
 function cookieOptions() {
   return {
     httpOnly: true as const,
-    secure: process.env.NODE_ENV === "production",
+    secure: secureCookie(),
     sameSite: "Lax" as const,
     path: "/",
     maxAge: SESSION_TTL_SECONDS,
@@ -79,7 +84,7 @@ app.post("/login", zValidator("json", loginSchema), async (c) => {
 app.post("/logout", (c) => {
   deleteCookie(c, SESSION_COOKIE_NAME, {
     path: "/",
-    secure: process.env.NODE_ENV === "production",
+    secure: secureCookie(),
     sameSite: "Lax",
   });
   return c.json({ ok: true });
