@@ -24,7 +24,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml ps
 ```
 
-`validate:production` 不输出密钥值，会拒绝弱或复用的密钥、默认企业名、非生产连接器标记、示例/明文 MCP 地址、超范围保留期以及直接暴露的服务端口。部署联调使用 `deploy`；准备全员发布时还必须执行 `pnpm validate:production -- --env-file .env --phase launch`，后者要求平台审核通过、正式市场入口以及真实客户端版本、操作系统和实测时间均已登记。
+`validate:production` 不输出密钥值。部署联调使用 `deploy`，只检查弱或复用密钥、明文传输开关、显式配置但超范围的保留期，以及直接暴露的服务端口；未填写保留期时使用运行时默认值 90/365 天。该阶段允许企业名称和 WorkBuddy 连接器保持 `unconfigured`，因此代码部署不依赖平台发布准备。准备全员发布时必须执行 `pnpm validate:production -- --env-file .env --phase launch`，再检查正式企业名、生产连接器标记、获批 HTTPS `/mcp` 地址、连接器元数据、平台审核、正式市场入口以及真实客户端版本、操作系统和实测时间。
 
 仓库自动部署使用 commit SHA 镜像标签，在远端切换前以容器进程环境执行同一 `deploy` 门禁，并通过 Compose 等待 PostgreSQL、Registry、MCP 和 Console 健康。远端脚本维护一套 `rollback` 应用镜像：健康切换失败时恢复它并清理失败镜像；成功后保留新的当前版本和一套回退版本，清理更早的无用标签，避免版本标签持续占满磁盘。首次部署没有可恢复镜像时保持失败状态，由运维排查后重试。数据库迁移是前向操作，不能把镜像恢复误称为数据库回滚。
 
@@ -35,7 +35,7 @@ curl --fail http://127.0.0.1:3001/health
 curl --fail http://127.0.0.1:3100/health
 ```
 
-生产配置至少包括不同的 32 字符以上随机 `SKILLHIVE_SESSION_SECRET` 和 `SKILLHIVE_INTERNAL_TOKEN`、强数据库密码、公司名称及保留期。确定正式地址后填写 `WORKBUDDY_CONNECTOR_MCP_URL=https://<企业域名>/mcp`；平台提交、审核、实测和市场入口状态分别记录在 `WORKBUDDY_CONNECTOR_*` / `WORKBUDDY_VERIFIED_*` 配置中，供管理员页面查看。不要把 `.env`、员工令牌或内部令牌提交到 Git、连接器包或工单正文。
+生产部署至少包括不同的 32 字符以上随机 `SKILLHIVE_SESSION_SECRET` 和 `SKILLHIVE_INTERNAL_TOKEN`、强数据库密码及安全监听边界；保留期未填写时使用 90/365 天默认值。企业名称和连接器字段可以在代码部署后补充，未配置期间管理端显示未就绪，不能构建或发布正式连接器。确定正式地址后填写 `WORKBUDDY_CONNECTOR_MCP_URL=https://<企业域名>/mcp`；平台提交、审核、实测和市场入口状态分别记录在 `WORKBUDDY_CONNECTOR_*` / `WORKBUDDY_VERIFIED_*` 配置中。不要把 `.env`、员工令牌或内部令牌提交到 Git、连接器包或工单正文。
 
 ## 3. 规则上线
 

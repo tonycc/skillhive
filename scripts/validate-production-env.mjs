@@ -71,27 +71,11 @@ export function validateProductionEnv(env, { phase = "deploy", connectorMeta }) 
     issues.push("SKILLHIVE_SESSION_SECRET 与 SKILLHIVE_INTERNAL_TOKEN 必须使用不同随机值");
   }
 
-  requireText(env, "SKILLHIVE_COMPANY_NAME", issues, ["本企业"]);
   if (env.SKILLHIVE_ALLOW_HTTP === "1") issues.push("生产环境禁止启用 SKILLHIVE_ALLOW_HTTP=1");
-  if (env.WORKBUDDY_CONNECTOR_ENVIRONMENT !== "production") {
-    issues.push("WORKBUDDY_CONNECTOR_ENVIRONMENT 必须是 production");
-  }
-  try {
-    parseEnterpriseMcpUrl(env.WORKBUDDY_CONNECTOR_MCP_URL ?? "");
-  } catch (error) {
-    issues.push(`WORKBUDDY_CONNECTOR_MCP_URL 无效：${error instanceof Error ? error.message : "必须是企业 HTTPS /mcp 地址"}`);
-  }
-
-  for (const [name, expected] of [
-    ["WORKBUDDY_CONNECTOR_SOURCE", connectorMeta.source],
-    ["WORKBUDDY_CONNECTOR_VERSION", connectorMeta.version],
-    ["WORKBUDDY_MIN_CLIENT_VERSION", connectorMeta.minWorkbuddyVersion],
-  ]) {
-    if (env[name] !== expected) issues.push(`${name} 必须与连接器源文件一致：${expected}`);
-  }
-
   for (const name of ["EXPLORATION_DRAFT_RETENTION_DAYS", "EXPLORATION_SUBMITTED_RETENTION_DAYS"]) {
-    const value = Number(env[name]);
+    const raw = env[name]?.trim();
+    if (!raw) continue;
+    const value = Number(raw);
     if (!Number.isInteger(value) || value < 1 || value > 3_650) issues.push(`${name} 必须是 1—3650 天的整数`);
   }
   for (const name of ["CONSOLE_BIND_ADDRESS", "REGISTRY_BIND_ADDRESS", "MCP_BIND_ADDRESS"]) {
@@ -108,6 +92,22 @@ export function validateProductionEnv(env, { phase = "deploy", connectorMeta }) 
   }
 
   if (phase === "launch") {
+    requireText(env, "SKILLHIVE_COMPANY_NAME", issues, ["本企业"]);
+    if (env.WORKBUDDY_CONNECTOR_ENVIRONMENT !== "production") {
+      issues.push("WORKBUDDY_CONNECTOR_ENVIRONMENT 必须是 production");
+    }
+    try {
+      parseEnterpriseMcpUrl(env.WORKBUDDY_CONNECTOR_MCP_URL ?? "");
+    } catch (error) {
+      issues.push(`WORKBUDDY_CONNECTOR_MCP_URL 无效：${error instanceof Error ? error.message : "必须是企业 HTTPS /mcp 地址"}`);
+    }
+    for (const [name, expected] of [
+      ["WORKBUDDY_CONNECTOR_SOURCE", connectorMeta.source],
+      ["WORKBUDDY_CONNECTOR_VERSION", connectorMeta.version],
+      ["WORKBUDDY_MIN_CLIENT_VERSION", connectorMeta.minWorkbuddyVersion],
+    ]) {
+      if (env[name] !== expected) issues.push(`${name} 必须与连接器源文件一致：${expected}`);
+    }
     if (env.WORKBUDDY_CONNECTOR_REVIEW_STATUS !== "approved") {
       issues.push("全员发布前 WORKBUDDY_CONNECTOR_REVIEW_STATUS 必须是 approved");
     }

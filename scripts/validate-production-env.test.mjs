@@ -15,6 +15,13 @@ const validDeploy = {
   POSTGRES_PASSWORD: "db-L8wZ4vT1qP7mR2x",
   SKILLHIVE_SESSION_SECRET: "session-L8wZ4vT1qP7mR2xK9sN6bH3cF5dJ",
   SKILLHIVE_INTERNAL_TOKEN: "internal-Q2nX7kM4pV9cD5sA8wR1tY6hF3zB",
+  CONSOLE_BIND_ADDRESS: "127.0.0.1",
+  REGISTRY_BIND_ADDRESS: "127.0.0.1",
+  MCP_BIND_ADDRESS: "127.0.0.1",
+};
+
+const validLaunch = {
+  ...validDeploy,
   SKILLHIVE_COMPANY_NAME: "示例公司研发中心",
   WORKBUDDY_CONNECTOR_MCP_URL: "https://mcp.skillhive.corp.cn/mcp",
   WORKBUDDY_CONNECTOR_ENVIRONMENT: "production",
@@ -23,9 +30,6 @@ const validDeploy = {
   WORKBUDDY_MIN_CLIENT_VERSION: "4.24.0",
   EXPLORATION_DRAFT_RETENTION_DAYS: "90",
   EXPLORATION_SUBMITTED_RETENTION_DAYS: "365",
-  CONSOLE_BIND_ADDRESS: "127.0.0.1",
-  REGISTRY_BIND_ADDRESS: "127.0.0.1",
-  MCP_BIND_ADDRESS: "127.0.0.1",
 };
 
 describe("production environment validation", () => {
@@ -48,8 +52,24 @@ describe("production environment validation", () => {
       .toThrow(/只能提供一次/);
   });
 
-  it("accepts a deployment-ready environment", () => {
-    expect(validateProductionEnv(validDeploy, { phase: "deploy", connectorMeta })).toEqual([]);
+  it("accepts deployment before WorkBuddy launch configuration and uses runtime retention defaults", () => {
+    expect(validateProductionEnv({
+      ...validDeploy,
+      SKILLHIVE_COMPANY_NAME: "本企业",
+      WORKBUDDY_CONNECTOR_MCP_URL: "",
+      WORKBUDDY_CONNECTOR_ENVIRONMENT: "unconfigured",
+      WORKBUDDY_CONNECTOR_SOURCE: "legacy-source",
+      WORKBUDDY_CONNECTOR_VERSION: "0.0.0",
+      WORKBUDDY_MIN_CLIENT_VERSION: "0.0.0",
+    }, { phase: "deploy", connectorMeta })).toEqual([]);
+  });
+
+  it("rejects an explicitly invalid retention period during deployment", () => {
+    const issues = validateProductionEnv({
+      ...validDeploy,
+      EXPLORATION_DRAFT_RETENTION_DAYS: "0",
+    }, { phase: "deploy", connectorMeta });
+    expect(issues.join("\n")).toMatch(/DRAFT_RETENTION_DAYS/);
   });
 
   it("rejects weak or reused secrets without returning their values", () => {
@@ -65,22 +85,28 @@ describe("production environment validation", () => {
     expect(issues.join("\n")).toMatch(/必须使用不同随机值/);
   });
 
-  it("rejects unsafe endpoints, non-production labels and public service binds", () => {
+  it("rejects unsafe production transport and public service binds during deployment", () => {
     const issues = validateProductionEnv({
       ...validDeploy,
-      WORKBUDDY_CONNECTOR_MCP_URL: "http://127.0.0.1:3100/mcp",
-      WORKBUDDY_CONNECTOR_ENVIRONMENT: "test",
       MCP_BIND_ADDRESS: "0.0.0.0",
       SKILLHIVE_ALLOW_HTTP: "1",
     }, { phase: "deploy", connectorMeta });
-    expect(issues.join("\n")).toMatch(/MCP_URL 无效/);
-    expect(issues.join("\n")).toMatch(/必须是 production/);
     expect(issues.join("\n")).toMatch(/回环地址/);
     expect(issues.join("\n")).toMatch(/禁止启用/);
   });
 
+  it("rejects unsafe WorkBuddy endpoints and non-production labels only at launch", () => {
+    const issues = validateProductionEnv({
+      ...validLaunch,
+      WORKBUDDY_CONNECTOR_MCP_URL: "http://127.0.0.1:3100/mcp",
+      WORKBUDDY_CONNECTOR_ENVIRONMENT: "test",
+    }, { phase: "launch", connectorMeta });
+    expect(issues.join("\n")).toMatch(/MCP_URL 无效/);
+    expect(issues.join("\n")).toMatch(/必须是 production/);
+  });
+
   it("requires platform and real-client evidence before launch", () => {
-    const issues = validateProductionEnv(validDeploy, { phase: "launch", connectorMeta });
+    const issues = validateProductionEnv(validLaunch, { phase: "launch", connectorMeta });
     expect(issues.join("\n")).toMatch(/REVIEW_STATUS/);
     expect(issues.join("\n")).toMatch(/MARKET_URL/);
     expect(issues.join("\n")).toMatch(/VERIFIED_CLIENT_VERSION/);
@@ -88,7 +114,7 @@ describe("production environment validation", () => {
 
   it("accepts a launch environment with external evidence fields", () => {
     expect(validateProductionEnv({
-      ...validDeploy,
+      ...validLaunch,
       WORKBUDDY_CONNECTOR_REVIEW_STATUS: "approved",
       WORKBUDDY_CONNECTOR_MARKET_URL: "https://open.workbuddy.cn/connectors/skillhive",
       WORKBUDDY_VERIFIED_CLIENT_VERSION: "4.24.1",

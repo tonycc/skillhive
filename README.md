@@ -128,7 +128,7 @@ registry 首次启动会自动执行数据库迁移；在 `.env` 中设置 `SKIL
 可直接启动的生产构建。数据库运行时可用
 `pnpm smoke:workbuddy` 验证管理员、员工令牌、草稿、隔离、幂等、提交和评审闭环；`pnpm load:workbuddy`
 通过真实 Streamable HTTP `/mcp` 地址执行读/写并发性能验收。真实企业 HTTPS 地址确认后，按
-[连接器构建说明](integrations/workbuddy/README.md) 生成待审核目录。部署前使用 `pnpm validate:production -- --env-file .env --phase deploy` 校验生产配置；全员发布前改用 `--phase launch`。CI 还会检查生产依赖高危漏洞与 Compose 配置。
+[连接器构建说明](integrations/workbuddy/README.md) 生成待审核目录。部署前使用 `pnpm validate:production -- --env-file .env --phase deploy` 校验核心密钥、传输安全、监听边界和显式保留期；该阶段允许 WorkBuddy 保持 `unconfigured`。全员发布前改用 `--phase launch`，再校验正式企业信息、连接器地址、平台审核和客户端证据。CI 还会检查生产依赖高危漏洞与 Compose 配置。
 
 ## 许可证
 
