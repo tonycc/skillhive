@@ -79,10 +79,9 @@ async function onVote(r: SkillRequest): Promise<void> {
 </script>
 
 <template>
-  <section aria-labelledby="requests-title">
+  <section aria-label="许愿墙">
     <div class="page-heading">
       <div>
-        <h1 id="requests-title" class="page-title">许愿墙</h1>
         <p class="page-description">想要还没有的技能？许下愿望，得票高的优先开发。</p>
       </div>
       <el-button type="primary" @click="dialogVisible = true">✨ 我要许愿</el-button>

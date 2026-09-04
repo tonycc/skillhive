@@ -1,5 +1,5 @@
 # SkillHive 服务端共享镜像（registry / mcp-server 共用，以 command 区分启动角色）。
-# 构建阶段生成 workspace 与应用 JS，运行阶段不再依赖 tsx 解释源码。
+# 构建阶段生成 workspace 与应用 JS；运行阶段不依赖 tsx、pnpm 或外部包下载。
 
 FROM node:22-alpine
 # 默认使用官方源；受限网络可通过 --build-arg NPM_REGISTRY=... 覆盖。
@@ -10,9 +10,16 @@ RUN corepack enable \
   && pnpm config set fetch-retries 5
 
 WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/cli/package.json apps/cli/package.json
+COPY apps/console/package.json apps/console/package.json
+COPY apps/mcp-server/package.json apps/mcp-server/package.json
+COPY apps/registry/package.json apps/registry/package.json
+COPY packages/db/package.json packages/db/package.json
+COPY packages/skill-schema/package.json packages/skill-schema/package.json
+RUN pnpm install --frozen-lockfile --prod=false
 COPY . .
-RUN pnpm install --frozen-lockfile --prod=false \
-  && pnpm --filter @skillhive/registry... build \
+RUN pnpm --filter @skillhive/registry... build \
   && pnpm --filter @skillhive/mcp-server... build
 
 ENV NODE_ENV=production

@@ -3,8 +3,9 @@ import { promisify } from "node:util";
 import type { Context, MiddlewareHandler } from "hono";
 import { getCookie } from "hono/cookie";
 import { sign, verify } from "hono/jwt";
-import { eq } from "drizzle-orm";
-import { db, users } from "@skillhive/db";
+import { z } from "zod";
+import { and, eq, isNull, sql } from "drizzle-orm";
+import { db, employees, employeeTokens, users } from "@skillhive/db";
 
 const scryptAsync = promisify(scrypt);
 
@@ -37,8 +38,18 @@ export interface SessionUser {
   departmentId: string | null;
 }
 
+export interface InternalEmployeeIdentity {
+  id: string;
+  tokenId: string;
+  name: string;
+  phone: string | null;
+  departmentId: string | null;
+  scopes: string[];
+}
+
 export const SESSION_COOKIE_NAME = "skillhive_session";
 export const SESSION_TTL_SECONDS = 7 * 24 * 3600;
+export type SessionMode = "cookie" | "bearer";
 
 function loadSessionSecret(): string {
   const configured = process.env.SKILLHIVE_SESSION_SECRET?.trim();
@@ -58,12 +69,17 @@ function loadSessionSecret(): string {
 const SESSION_SECRET = loadSessionSecret();
 
 /** 为用户签发会话令牌；sessionVersion 变更会使旧令牌立即失效。 */
-export async function issueToken(user: SessionUser, sessionVersion: number): Promise<string> {
+export async function issueToken(
+  user: SessionUser,
+  sessionVersion: number,
+  mode: SessionMode,
+): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   return sign(
     {
       sub: user.id,
       ver: sessionVersion,
+      mode,
       iat: now,
       exp: now + SESSION_TTL_SECONDS,
     },
@@ -72,28 +88,40 @@ export async function issueToken(user: SessionUser, sessionVersion: number): Pro
 }
 
 /** 从 Bearer 或 HttpOnly Cookie 解析会话，并从数据库刷新角色、部门与有效状态。 */
-export async function resolveSession(c: Context): Promise<SessionUser | null> {
+async function resolveSessionDetails(c: Context): Promise<{ user: SessionUser; mode: SessionMode } | null> {
   const header = c.req.header("Authorization") ?? "";
-  const token = header.startsWith("Bearer ")
+  const mode: SessionMode = header.startsWith("Bearer ") ? "bearer" : "cookie";
+  const token = mode === "bearer"
     ? header.slice("Bearer ".length).trim()
     : getCookie(c, SESSION_COOKIE_NAME) ?? "";
   if (!token) return null;
 
   try {
     const payload = await verify(token, SESSION_SECRET, "HS256");
-    if (typeof payload.sub !== "string" || typeof payload.ver !== "number") return null;
+    if (
+      typeof payload.sub !== "string"
+      || typeof payload.ver !== "number"
+      || payload.mode !== mode
+    ) return null;
     const user = await db.query.users.findFirst({ where: eq(users.id, payload.sub) });
     if (!user || user.disabledAt !== null || user.sessionVersion !== payload.ver) return null;
     return {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      departmentId: user.departmentId,
+      mode,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        departmentId: user.departmentId,
+      },
     };
   } catch {
     return null;
   }
+}
+
+export async function resolveSession(c: Context): Promise<SessionUser | null> {
+  return (await resolveSessionDetails(c))?.user ?? null;
 }
 
 /** 要求已登录（任意角色），会话用户写入 c.set("user")。 */
@@ -119,16 +147,17 @@ export const requirePublisher: MiddlewareHandler = async (c, next) => {
 
 /** 要求 admin 角色（账号与系统管理接口）。 */
 export const requireAdmin: MiddlewareHandler = async (c, next) => {
-  const user = await resolveSession(c);
-  if (!user) return c.json({ error: "未登录或登录已过期（请先登录）" }, 401);
-  if (user.role !== "admin") return c.json({ error: "无管理员权限" }, 403);
-  c.set("user", user);
+  const session = await resolveSessionDetails(c);
+  if (!session) return c.json({ error: "未登录或登录已过期（请先登录）" }, 401);
+  if (session.mode !== "cookie") return c.json({ error: "运营 API 仅接受管理员 Web 会话" }, 403);
+  if (session.user.role !== "admin") return c.json({ error: "无管理员权限" }, 403);
+  c.set("user", session.user);
   return next();
 };
 
-// ---------- 个人接入令牌（PAT，供 MCP 客户端鉴权） ----------
+// ---------- 连接器 Bearer 令牌工具 ----------
 
-/** PAT 明文格式：sk- + 48 位 hex（高熵随机值，sha256 哈希存储即可）。 */
+/** 员工连接器令牌格式：sk- + 48 位 hex（高熵随机值，sha256 哈希存储即可）。 */
 export function generatePat(): { token: string; hash: string } {
   const token = `sk-${randomBytes(24).toString("hex")}`;
   return { token, hash: hashPat(token) };
@@ -164,3 +193,31 @@ export const requireInternalToken: MiddlewareHandler = async (c, next) => {
   }
   return next();
 };
+
+/** 使用 MCP Server 传入的员工与令牌主键重新校验实时身份；内部令牌本身不能代替员工授权。 */
+export async function resolveInternalEmployee(c: Context): Promise<InternalEmployeeIdentity | null> {
+  const employeeId = c.req.header("X-SkillHive-Employee-Id")
+    ?? c.req.header("X-SkillHive-Subject-Id")
+    ?? "";
+  const tokenId = c.req.header("X-SkillHive-Token-Id") ?? "";
+  if (
+    c.req.header("X-SkillHive-Subject-Type") !== "employee"
+    || !z.string().uuid().safeParse(employeeId).success
+    || !z.string().uuid().safeParse(tokenId).success
+  ) return null;
+  const [employee] = await db.select({
+    id: employees.id,
+    tokenId: employeeTokens.id,
+    name: employees.name,
+    phone: employees.phone,
+    departmentId: employees.departmentId,
+    scopes: employeeTokens.scopes,
+  }).from(employeeTokens).innerJoin(employees, eq(employeeTokens.employeeId, employees.id)).where(and(
+    eq(employeeTokens.id, tokenId),
+    eq(employeeTokens.employeeId, employeeId),
+    isNull(employeeTokens.revokedAt),
+    eq(employees.status, "active"),
+    sql`${employeeTokens.expiresAt} > now()`,
+  )).limit(1);
+  return employee ?? null;
+}

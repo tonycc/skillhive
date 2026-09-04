@@ -7,11 +7,14 @@ const REGISTRY_TIMEOUT_MS = 5_000;
 
 /** 已鉴权的调用者身份（Registry 的 PAT 解析结果） */
 export interface CallerIdentity {
+  subjectType: "employee";
   id: string;
-  email: string;
+  email: string | null;
   name: string;
-  role: "admin" | "publisher" | "member";
+  role: "employee";
   departmentId: string | null;
+  phone: string | null;
+  scopes: string[];
   /** PAT 数据库主键。SSE 会话用它做持续有效性校验和主动吊销。 */
   tokenId: string;
 }
@@ -22,9 +25,23 @@ export interface SkillListItem {
   name: string;
   summary: string;
   category?: string;
+  tags?: string[];
+  skillType?: "ordinary" | "application";
   status?: string;
   iconUrl?: string | null;
   updatedAt?: string;
+}
+
+export interface ApplicationListItem {
+  key: string;
+  name: string;
+  summary: string;
+  category: string;
+  keywords: string[];
+  entryType: "application";
+  applicationKey: string;
+  entryTool: string;
+  resumeTool?: string;
 }
 
 /** 详情接口只返回资源元数据，不携带可能很大的 base64 正文。 */
@@ -61,6 +78,7 @@ export class RegistryError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    public readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "RegistryError";
@@ -88,7 +106,7 @@ async function parseJson<T>(res: Response): Promise<T> {
 
 async function requestRegistry<T>(
   path: string,
-  identity: Pick<CallerIdentity, "id" | "tokenId">,
+  identity: Pick<CallerIdentity, "id" | "tokenId" | "subjectType">,
   init: RequestInit = {},
 ): Promise<T> {
   let res: Response;
@@ -99,7 +117,9 @@ async function requestRegistry<T>(
       headers: {
         Accept: "application/json",
         "X-SkillHive-Internal-Token": getInternalToken(),
-        "X-SkillHive-User-Id": identity.id,
+        "X-SkillHive-Subject-Id": identity.id,
+        "X-SkillHive-Subject-Type": identity.subjectType,
+        "X-SkillHive-Employee-Id": identity.id,
         "X-SkillHive-Token-Id": identity.tokenId,
         ...init.headers,
       },
@@ -115,11 +135,8 @@ async function requestRegistry<T>(
   }
 
   if (!res.ok) {
-    if (res.status === 401 || res.status === 403) {
-      throw new RegistryError(res.status, "没有权限访问该 skill");
-    }
-    if (res.status === 404) throw new RegistryError(404, "skill 不存在");
-    throw new RegistryError(res.status, `Registry 请求失败（${res.status}）`);
+    const error = await parseJson<{ error?: string; [key: string]: unknown }>(res);
+    throw new RegistryError(res.status, error.error ?? `Registry 请求失败（${res.status}）`, error);
   }
   const json = await parseJson<{ data: T }>(res);
   return json.data;
@@ -128,6 +145,11 @@ async function requestRegistry<T>(
 /** 仅走 Registry 的内部、按调用者过滤的技能列表接口。 */
 export function fetchVisibleSkills(identity: CallerIdentity): Promise<SkillListItem[]> {
   return requestRegistry<SkillListItem[]>("/api/skills/internal", identity);
+}
+
+/** 应用目录与应用内部 Skill 分离；这里只返回员工当前可进入的应用元数据。 */
+export function fetchVisibleApplications(identity: CallerIdentity): Promise<ApplicationListItem[]> {
+  return requestRegistry<ApplicationListItem[]>("/api/internal/applications", identity);
 }
 
 /** 仅走 Registry 的内部、按调用者过滤的技能详情接口。 */
@@ -155,6 +177,21 @@ export async function fetchVisibleSkillFile(
   }
 }
 
+/** 受管应用资源必须从探索启动时保存的不可变快照读取。 */
+export async function fetchExplorationRuleFile(
+  explorationId: string,
+  slug: string,
+  path: string,
+  version: string,
+  identity: CallerIdentity,
+): Promise<SkillFile> {
+  const params = new URLSearchParams({ slug, path, version });
+  return requestRegistry<SkillFile>(
+    `/api/internal/explorations/${encodeURIComponent(explorationId)}/rule-file?${params.toString()}`,
+    identity,
+  );
+}
+
 /** 埋点身份始终由可信请求头导出，不接受客户端传入 userId。 */
 export async function reportEvent(
   slug: string,
@@ -171,7 +208,9 @@ export async function reportEvent(
           Accept: "application/json",
           "Content-Type": "application/json",
           "X-SkillHive-Internal-Token": getInternalToken(),
-          "X-SkillHive-User-Id": identity.id,
+          "X-SkillHive-Subject-Id": identity.id,
+          "X-SkillHive-Subject-Type": identity.subjectType,
+          "X-SkillHive-Employee-Id": identity.id,
           "X-SkillHive-Token-Id": identity.tokenId,
         },
         body: JSON.stringify({ event, client }),
@@ -196,7 +235,11 @@ export async function validatePatSession(identity: CallerIdentity): Promise<bool
         "Content-Type": "application/json",
         "X-SkillHive-Internal-Token": getInternalToken(),
       },
-      body: JSON.stringify({ tokenId: identity.tokenId, userId: identity.id }),
+      body: JSON.stringify({
+        tokenId: identity.tokenId,
+        subjectId: identity.id,
+        subjectType: identity.subjectType,
+      }),
       redirect: "error",
       signal: AbortSignal.timeout(REGISTRY_TIMEOUT_MS),
     });
@@ -231,10 +274,11 @@ export async function resolvePat(token: string): Promise<CallerIdentity | null> 
     const caller = json.data;
     if (
       !caller?.id ||
-      !caller.email ||
       !caller.name ||
       !caller.tokenId ||
-      !["admin", "publisher", "member"].includes(caller.role)
+      !Array.isArray(caller.scopes) ||
+      caller.role !== "employee" ||
+      caller.subjectType !== "employee"
     ) {
       return null;
     }
@@ -242,4 +286,94 @@ export async function resolvePat(token: string): Promise<CallerIdentity | null> 
   } catch {
     return null;
   }
+}
+
+export interface ExplorationContent {
+  title: string;
+  problemDescription?: string;
+  targetUsers?: string;
+  currentProcess?: string;
+  painAndEvidence: Array<{
+    pain: string;
+    evidence?: string;
+    evidenceStatus: "employee_statement" | "to_verify";
+  }>;
+  objectivesAndBenefits?: string;
+  scope?: string;
+  nonGoals?: string;
+  acceptanceCriteria: string[];
+  constraintsAndRisks: string[];
+  pendingQuestions: string[];
+  summary?: string;
+}
+
+export function getConnectorStatus(identity: CallerIdentity, protocolVersion?: string): Promise<unknown> {
+  const query = protocolVersion ? `?protocolVersion=${encodeURIComponent(protocolVersion)}` : "";
+  return requestRegistry(`/api/internal/explorations/status${query}`, identity);
+}
+
+export function startExploration(
+  identity: CallerIdentity,
+  input: { initialProblem?: string; idempotencyKey: string; protocolVersion: "1.0" },
+): Promise<unknown> {
+  return requestRegistry("/api/internal/explorations/start", identity, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function listMyExplorations(
+  identity: CallerIdentity,
+  query: { state?: string; keyword?: string; page: number; pageSize: number },
+): Promise<unknown> {
+  const params = new URLSearchParams({ page: String(query.page), pageSize: String(query.pageSize) });
+  if (query.state) params.set("state", query.state);
+  if (query.keyword) params.set("keyword", query.keyword);
+  return requestRegistry(`/api/internal/explorations?${params.toString()}`, identity);
+}
+
+export function getExploration(
+  identity: CallerIdentity,
+  explorationId: string,
+  submission?: number,
+): Promise<unknown> {
+  const query = submission === undefined ? "" : `?submission=${submission}`;
+  return requestRegistry(`/api/internal/explorations/${encodeURIComponent(explorationId)}${query}`, identity);
+}
+
+export function saveExploration(
+  identity: CallerIdentity,
+  explorationId: string,
+  input: { expectedRevision: number; content: ExplorationContent; idempotencyKey: string },
+): Promise<unknown> {
+  return requestRegistry(`/api/internal/explorations/${encodeURIComponent(explorationId)}`, identity, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function submitExploration(
+  identity: CallerIdentity,
+  explorationId: string,
+  input: { expectedRevision: number; idempotencyKey: string },
+): Promise<unknown> {
+  return requestRegistry(`/api/internal/explorations/${encodeURIComponent(explorationId)}/submit`, identity, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function abandonExploration(
+  identity: CallerIdentity,
+  explorationId: string,
+  input: { expectedRevision: number; idempotencyKey: string },
+): Promise<unknown> {
+  return requestRegistry(`/api/internal/explorations/${encodeURIComponent(explorationId)}/abandon`, identity, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
 }

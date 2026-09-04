@@ -9,22 +9,22 @@ import {
   skillVersionFiles,
   skillVersions,
   usageEvents,
-  userTokens,
-  users,
 } from "@skillhive/db";
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   parseSkillMd,
   validateResourceFiles,
   validateResourcePath,
 } from "@skillhive/skill-schema";
 import {
-  requireAuth,
+  requireAdmin,
   requireInternalToken,
   requirePublisher,
+  resolveInternalEmployee,
   type SessionUser,
 } from "../auth.js";
 import { consumeRateLimit } from "../security.js";
+import { notifyPromptsChanged } from "../prompt-notifications.js";
 
 class VersionConflictError extends Error {
   constructor(public readonly slug: string, public readonly version: string) {
@@ -33,22 +33,6 @@ class VersionConflictError extends Error {
 }
 
 class PublishForbiddenError extends Error {}
-
-const MCP_SERVER_URL = process.env.MCP_SERVER_URL ?? "http://localhost:3100";
-
-function notifyPromptsChanged(): void {
-  const internalToken = process.env.SKILLHIVE_INTERNAL_TOKEN?.trim();
-  if (!internalToken) return;
-  void fetch(`${MCP_SERVER_URL}/internal/prompts-changed`, {
-    method: "POST",
-    headers: { "X-SkillHive-Internal-Token": internalToken },
-    signal: AbortSignal.timeout(3_000),
-  }).then((res) => {
-    if (!res.ok) console.warn(`[skillhive] 通知 MCP Server 返回 ${res.status}`);
-  }).catch((err: unknown) => {
-    console.warn("[skillhive] 通知 MCP Server 失败：", err instanceof Error ? err.message : err);
-  });
-}
 
 type AppEnv = { Variables: { user: SessionUser } };
 const app = new Hono<AppEnv>();
@@ -84,37 +68,14 @@ async function canReadSkill(skill: SkillRow, user: SessionUser): Promise<boolean
  * 这样 stdio 等长生命周期进程中的令牌一经吊销，下一个数据请求也会立即失败。
  */
 async function resolveInternalCaller(c: Context<AppEnv>): Promise<SessionUser | null> {
-  const userId = c.req.header("X-SkillHive-User-Id") ?? "";
-  const tokenId = c.req.header("X-SkillHive-Token-Id") ?? "";
-  if (
-    !z.string().uuid().safeParse(userId).success
-    || !z.string().uuid().safeParse(tokenId).success
-  ) return null;
-
-  const [row] = await db
-    .select({
-      id: users.id,
-      email: users.email,
-      name: users.name,
-      role: users.role,
-      departmentId: users.departmentId,
-    })
-    .from(userTokens)
-    .innerJoin(users, eq(userTokens.userId, users.id))
-    .where(and(
-      eq(userTokens.id, tokenId),
-      eq(userTokens.userId, userId),
-      isNull(userTokens.revokedAt),
-      isNull(users.disabledAt),
-    ))
-    .limit(1);
-  if (!row) return null;
+  const employee = await resolveInternalEmployee(c);
+  if (!employee?.scopes.includes("skills:read")) return null;
   return {
-    id: row.id,
-    email: row.email,
-    name: row.name,
-    role: row.role,
-    departmentId: row.departmentId,
+    id: employee.id,
+    email: `${employee.id}@employee.invalid`,
+    name: employee.name,
+    role: "member",
+    departmentId: employee.departmentId,
   };
 }
 
@@ -126,6 +87,7 @@ async function visiblePublishedSkills(user: SessionUser) {
       name: skills.name,
       summary: skills.summary,
       category: skills.category,
+      skillType: skills.skillType,
       status: skills.status,
       iconUrl: skills.iconUrl,
       updatedAt: skills.updatedAt,
@@ -148,16 +110,38 @@ async function visiblePublishedSkills(user: SessionUser) {
     values.push(row.departmentId);
     bySkill.set(row.skillId, values);
   }
-  return list.filter((skill) => {
+  const visible = list.filter((skill) => {
     const restrictedTo = bySkill.get(skill.id) ?? [];
     return restrictedTo.length === 0
       || (user.departmentId !== null && restrictedTo.includes(user.departmentId));
   });
+  if (visible.length === 0) return visible;
+
+  // tags 随不可变版本存储；列表只暴露每个 Skill 最新版本的标签，供客户端做意图检索。
+  const versionRows = await db
+    .select({
+      skillId: skillVersions.skillId,
+      content: skillVersions.content,
+    })
+    .from(skillVersions)
+    .where(inArray(skillVersions.skillId, visible.map((skill) => skill.id)))
+    .orderBy(desc(skillVersions.createdAt));
+  const tagsBySkill = new Map<string, string[]>();
+  for (const version of versionRows) {
+    if (tagsBySkill.has(version.skillId)) continue;
+    try {
+      tagsBySkill.set(version.skillId, parseSkillMd(version.content).frontmatter.tags);
+    } catch {
+      tagsBySkill.set(version.skillId, []);
+    }
+  }
+  return visible.map((skill) => ({ ...skill, tags: tagsBySkill.get(skill.id) ?? [] }));
 }
 
-async function skillDetail(slug: string, user: SessionUser) {
+async function skillDetail(slug: string, user: SessionUser, allowApplication = false) {
   const skill = await db.query.skills.findFirst({ where: eq(skills.slug, slug) });
   if (!skill) return { kind: "missing" as const };
+  if (!allowApplication && skill.skillType !== "ordinary") return { kind: "forbidden" as const };
   if (!(await canReadSkill(skill, user))) return { kind: "forbidden" as const };
 
   const [latest] = await db
@@ -186,7 +170,6 @@ async function skillDetail(slug: string, user: SessionUser) {
     .from(skillDepartmentVisibility)
     .innerJoin(departments, eq(skillDepartmentVisibility.departmentId, departments.id))
     .where(eq(skillDepartmentVisibility.skillId, skill.id));
-
   let body = "";
   let frontmatter: ReturnType<typeof parseSkillMd>["frontmatter"] | null = null;
   if (latest) {
@@ -227,11 +210,13 @@ async function skillFile(
   version: string,
   path: string,
   user: SessionUser,
+  allowApplication = false,
 ): Promise<SkillFileResult> {
   if (!/^\d+\.\d+\.\d+$/.test(version) || version.length > 32) return { kind: "invalid" };
   if (validateResourcePath(path)) return { kind: "invalid" };
   const skill = await db.query.skills.findFirst({ where: eq(skills.slug, slug) });
   if (!skill) return { kind: "missing" };
+  if (!allowApplication && skill.skillType !== "ordinary") return { kind: "forbidden" };
   if (!(await canReadSkill(skill, user))) return { kind: "forbidden" };
 
   const [selectedVersion] = await db
@@ -278,7 +263,9 @@ function detailResponse(c: Context<AppEnv>, result: Awaited<ReturnType<typeof sk
 app.get("/internal", requireInternalToken, async (c) => {
   const user = await resolveInternalCaller(c);
   if (!user) return c.json({ error: "内部调用身份或接入令牌已失效" }, 401);
-  return c.json({ data: await visiblePublishedSkills(user) });
+  return c.json({
+    data: (await visiblePublishedSkills(user)).filter((skill) => skill.skillType === "ordinary"),
+  });
 });
 
 const eventSchema = z.object({
@@ -302,6 +289,7 @@ async function recordEvent(
 ) {
   const skill = await db.query.skills.findFirst({ where: eq(skills.slug, slug) });
   if (!skill) return c.json({ error: `skill "${slug}" 不存在` }, 404);
+  if (skill.skillType !== "ordinary") return c.json({ error: "应用 Skill 只能由应用使用" }, 403);
   if (!(await canReadSkill(skill, user))) return c.json({ error: "无权访问该 skill" }, 403);
   const rate = consumeRateLimit("skill-event", user.id, 120, 60_000);
   if (!rate.allowed) {
@@ -313,7 +301,8 @@ async function recordEvent(
     event: payload.event,
     score: payload.score === undefined ? null : String(payload.score),
     client: payload.client,
-    userId: user.id,
+    // employee.id 不属于 users 外键；员工业务行为记录在探索审计表中。
+    userId: c.req.header("X-SkillHive-Subject-Type") === "employee" ? null : user.id,
   });
   return c.json({ ok: true }, 201);
 }
@@ -350,16 +339,19 @@ app.get("/internal/:slug", requireInternalToken, async (c) => {
   return detailResponse(c, await skillDetail(slug, user), slug);
 });
 
-/** Console 技能市场列表（必须登录，published 且按部门过滤）。 */
-app.get("/", requireAuth, async (c) => c.json({ data: await visiblePublishedSkills(c.get("user")) }));
+/** Console 技能管理列表（必须登录，published 且按部门过滤）。 */
+app.get("/", requireAdmin, async (c) => c.json({
+  data: await visiblePublishedSkills(c.get("user")),
+}));
 
 /** Console 埋点：身份只从会话派生。 */
-app.post("/:slug/events", requireAuth, zValidator("json", eventSchema), async (c) =>
+app.post("/:slug/events", requireAdmin, zValidator("json", eventSchema), async (c) =>
   recordEvent(c, c.get("user"), c.req.param("slug"), c.req.valid("json")));
 
 const publishSchema = z.object({
   content: z.string().min(1).max(512 * 1024),
   changelog: z.string().max(8 * 1024).default(""),
+  skillType: z.enum(["ordinary", "application"]).default("ordinary"),
   files: z.array(z.object({
     path: z.string().min(1).max(512),
     contentBase64: z.string().max(768 * 1024),
@@ -369,7 +361,7 @@ const publishSchema = z.object({
 /** POST /api/skills/publish — 发布新版本（publisher 只能管理自己的 slug，admin 可管理全部）。 */
 app.post("/publish", requirePublisher, zValidator("json", publishSchema), async (c) => {
   const publisher = c.get("user");
-  const { content, changelog, files } = c.req.valid("json");
+  const { content, changelog, files, skillType } = c.req.valid("json");
   let parsed;
   try {
     parsed = parseSkillMd(content);
@@ -379,12 +371,18 @@ app.post("/publish", requirePublisher, zValidator("json", publishSchema), async 
   }
   const slug = parsed.frontmatter.name;
   const version = parsed.frontmatter.version ?? "0.1.0";
+  if (skillType === "application" && publisher.role !== "admin") {
+    return c.json({ error: "只有管理员可以发布应用 Skill" }, 403);
+  }
 
   try {
     const result = await db.transaction(async (tx) => {
       // 同一 slug 串行发布，避免两个 publisher 同时首次创建时绕过 owner 检查。
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${slug}, 0))`);
       const existing = await tx.query.skills.findFirst({ where: eq(skills.slug, slug) });
+      if (existing && existing.skillType !== skillType) {
+        throw new PublishForbiddenError(`skill "${slug}" 的用途类型不能在普通 Skill 与应用 Skill 之间变更`);
+      }
       if (existing && publisher.role !== "admin" && existing.ownerId !== publisher.id) {
         throw new PublishForbiddenError(`无权发布其他负责人管理的 skill "${slug}"`);
       }
@@ -396,6 +394,7 @@ app.post("/publish", requirePublisher, zValidator("json", publishSchema), async 
           name: slug,
           summary: parsed.frontmatter.description,
           category: parsed.frontmatter.category ?? "通用",
+          skillType,
           status: "published",
           iconUrl: parsed.frontmatter.icon ?? null,
           ownerId: publisher.id,
@@ -405,6 +404,7 @@ app.post("/publish", requirePublisher, zValidator("json", publishSchema), async 
           set: {
             summary: parsed.frontmatter.description,
             category: parsed.frontmatter.category ?? "通用",
+            skillType,
             status: "published",
             iconUrl: parsed.frontmatter.icon ?? null,
           },
@@ -450,7 +450,12 @@ app.post("/publish", requirePublisher, zValidator("json", publishSchema), async 
 
     notifyPromptsChanged();
     return c.json({
-      data: { slug: result.skill.slug, version: result.skillVersion.version, status: result.skill.status },
+      data: {
+        slug: result.skill.slug,
+        version: result.skillVersion.version,
+        status: result.skill.status,
+        skillType: result.skill.skillType,
+      },
     }, 201);
   } catch (err) {
     if (err instanceof VersionConflictError) return c.json({ error: err.message }, 409);
@@ -462,19 +467,20 @@ app.post("/publish", requirePublisher, zValidator("json", publishSchema), async 
 });
 
 /** Console 详情：必须登录；对非 published 内容应用管理预览规则。 */
-app.get("/:slug/file", requireAuth, async (c) => fileResponse(
+app.get("/:slug/file", requireAdmin, async (c) => fileResponse(
   c,
   await skillFile(
     c.req.param("slug"),
     c.req.query("version") ?? "",
     c.req.query("path") ?? "",
     c.get("user"),
+    true,
   ),
 ));
 
-app.get("/:slug", requireAuth, async (c) => {
+app.get("/:slug", requireAdmin, async (c) => {
   const slug = c.req.param("slug");
-  return detailResponse(c, await skillDetail(slug, c.get("user")), slug);
+  return detailResponse(c, await skillDetail(slug, c.get("user"), true), slug);
 });
 
 function decodedBase64Size(value: string): number {

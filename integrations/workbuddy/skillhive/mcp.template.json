@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "skillhive": {
+      "type": "streamableHttp",
+      "url": "__SKILLHIVE_MCP_URL__",
+      "headers": { "Authorization": "Bearer ${SKILLHIVE_PAT}" },
+      "timeout": 30000
+    }
+  }
+}

@@ -24,3 +24,6 @@ data/
 
 # 内部讨论/决策记录文档，不同步到 GitHub
 docs/internal/
+
+# WorkBuddy 包含生产 MCP 地址的本地构建产物
+integrations/workbuddy/dist/

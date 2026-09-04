@@ -5,6 +5,12 @@ import skills from "./routes/skills.js";
 import stats from "./routes/stats.js";
 import requests from "./routes/requests.js";
 import auth from "./routes/auth.js";
+import employees from "./routes/employees.js";
+import explorations, { adminExplorations } from "./routes/explorations.js";
+import requirements from "./routes/requirements.js";
+import audit from "./routes/audit.js";
+import applications from "./routes/applications.js";
+import internalApplications from "./routes/internal-applications.js";
 import { requireSameOriginForCookieWrites } from "./security.js";
 
 export function createApp(): Hono {
@@ -26,6 +32,13 @@ export function createApp(): Hono {
   app.route("/api/stats", stats);
   app.route("/api/requests", requests);
   app.route("/api/auth", auth);
+  app.route("/api/internal/explorations", explorations);
+  app.route("/api/internal/applications", internalApplications);
+  app.route("/api/admin/employees", employees);
+  app.route("/api/admin/explorations", adminExplorations);
+  app.route("/api/admin/requirements", requirements);
+  app.route("/api/admin/audit", audit);
+  app.route("/api/admin/applications", applications);
   app.notFound((c) => c.json({ error: "接口不存在" }, 404));
   app.onError((error, c) => {
     console.error("Registry 未处理异常：", error);

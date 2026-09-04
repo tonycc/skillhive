@@ -2,6 +2,12 @@ packages:
   - "apps/*"
   - "packages/*"
 
+overrides:
+  # MCP SDK 间接依赖的 fast-uri 3.1.5 存在高危公告，统一锁定到修复版本。
+  fast-uri: 3.1.6
+  # Express 间接依赖的 qs 6.15.3 存在资源消耗类中危公告，统一锁定到修复版本。
+  qs: 6.16.0
+
 # 允许以下依赖执行安装构建脚本（pnpm 11 默认拦截）
 onlyBuiltDependencies:
   - esbuild

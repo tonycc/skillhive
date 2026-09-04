@@ -1,0 +1,2 @@
+ALTER TABLE "exploration_idempotency" ADD COLUMN "exploration_id" uuid;--> statement-breakpoint
+ALTER TABLE "exploration_idempotency" ADD CONSTRAINT "exploration_idempotency_exploration_id_explorations_id_fk" FOREIGN KEY ("exploration_id") REFERENCES "public"."explorations"("id") ON DELETE cascade ON UPDATE no action;

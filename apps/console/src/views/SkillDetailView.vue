@@ -228,7 +228,7 @@ async function loadSkill(): Promise<void> {
     void selectFile("SKILL.md");
     void nextTick(() => treeRef.value?.setCurrentKey("SKILL.md"));
     // 上报浏览埋点
-    reportEvent(requestedSlug, "view");
+    if (detail.skillType === "ordinary") reportEvent(requestedSlug, "view");
   } catch (error) {
     if (requestId !== skillRequestId) return;
     if (error instanceof ApiError && error.status === 403) {
@@ -247,23 +247,23 @@ watch(() => props.slug, loadSkill, { immediate: true });
 </script>
 
 <template>
-  <router-link to="/" class="back-link">← 返回技能市场</router-link>
+  <router-link to="/" class="back-link">← 返回 Skill 管理</router-link>
 
-  <h1 v-if="loading" class="page-title">技能详情</h1>
   <el-skeleton v-if="loading" :rows="6" animated style="margin-top: 24px" />
 
-  <section v-else-if="errorMessage || !skill" aria-labelledby="detail-error-title">
-    <h1 id="detail-error-title" class="page-title">技能详情</h1>
+  <section v-else-if="errorMessage || !skill" aria-label="技能详情加载失败">
     <el-empty :description="errorMessage">
       <el-button type="primary" @click="loadSkill">重新加载</el-button>
     </el-empty>
   </section>
 
   <template v-else>
-    <h1 class="page-title">{{ skill.name }}</h1>
     <p style="color: var(--text-secondary); margin-top: 0">{{ skill.summary }}</p>
 
     <div class="detail-meta">
+      <el-tag :type="skill.skillType === 'application' ? 'warning' : 'info'" effect="plain">
+        {{ skill.skillType === "application" ? "应用 Skill" : "普通 Skill" }}
+      </el-tag>
       <el-tag effect="plain">分类：{{ skill.category }}</el-tag>
       <el-tag effect="plain">版本：v{{ skill.latestVersion?.version ?? "-" }}</el-tag>
       <el-tag effect="plain">
@@ -275,9 +275,12 @@ watch(() => props.slug, loadSkill, { immediate: true });
       </el-tag>
     </div>
 
-    <el-alert type="warning" :closable="false" style="margin-bottom: 24px">
+    <el-alert v-if="skill.skillType === 'ordinary'" type="warning" :closable="false" style="margin-bottom: 24px">
       💡 在 WorkBuddy 的 / 菜单中选择「{{ skill.slug }}」即可使用本技能；
       也可以在对话中说「用 {{ skill.name }} 帮我…」让 AI 自动调用。
+    </el-alert>
+    <el-alert v-else type="info" :closable="false" style="margin-bottom: 24px">
+      此 Skill 不会被企业 Skill 助手检索；满足应用契约的版本可在对应应用中选择并激活。
     </el-alert>
 
     <p

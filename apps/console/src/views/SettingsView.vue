@@ -1,217 +1,110 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { ElMessage, ElMessageBox } from "element-plus";
-import { fetchTokens, createToken, revokeToken, type PatInfo } from "../api";
+import { onMounted, ref } from "vue";
+import {
+  fetchWorkBuddyConnectorInfo,
+  type WorkBuddyConnectorInfo,
+} from "../api";
 
-/** 接入设置：管理用于 WorkBuddy 等 MCP 客户端的个人接入令牌（PAT） */
+const loading = ref(false);
+const loadError = ref("");
+const connector = ref<WorkBuddyConnectorInfo | null>(null);
 
-const tokens = ref<PatInfo[]>([]);
-const loading = ref(true);
-const loadFailed = ref(false);
-const newName = ref("");
-const creating = ref(false);
-/** 刚生成的令牌明文（仅此一次可见） */
-const createdToken = ref("");
-
-const mcpUrl = computed(() => {
-  const configured = import.meta.env.VITE_MCP_URL?.trim();
-  try {
-    return new URL(configured || "/sse", window.location.origin).toString();
-  } catch {
-    return new URL("/sse", window.location.origin).toString();
-  }
-});
-
-/** 生成后展示给用户的 MCP 配置片段（令牌已填入） */
-const configSnippet = computed(() =>
-  JSON.stringify(
-    {
-      mcpServers: {
-        skillhive: {
-          url: mcpUrl.value,
-          headers: { Authorization: `Bearer ${createdToken.value}` },
-        },
-      },
-    },
-    null,
-    2,
-  ),
-);
-
-async function reload(): Promise<void> {
+async function load(): Promise<void> {
   loading.value = true;
-  loadFailed.value = false;
+  loadError.value = "";
   try {
-    tokens.value = await fetchTokens();
+    connector.value = await fetchWorkBuddyConnectorInfo();
   } catch (error) {
-    loadFailed.value = true;
-    ElMessage.error((error as Error).message);
+    loadError.value = (error as Error).message;
   } finally {
     loading.value = false;
   }
 }
 
-async function onCreate(): Promise<void> {
-  if (newName.value.trim().length > 100) {
-    ElMessage.warning("令牌备注不能超过 100 个字符");
-    return;
-  }
-  creating.value = true;
-  createdToken.value = "";
-  try {
-    const { token } = await createToken(newName.value.trim());
-    createdToken.value = token;
-    newName.value = "";
-    await reload();
-    ElMessage.success("令牌已生成，请立即复制保存");
-  } catch (err) {
-    ElMessage.error((err as Error).message);
-  } finally {
-    creating.value = false;
-  }
+onMounted(load);
+
+function reviewStatusLabel(value: string): string {
+  return ({
+    not_submitted: "待提交",
+    submitted: "审核中",
+    approved: "已通过",
+    rejected: "未通过",
+    paused: "已暂停",
+  } as Record<string, string>)[value] ?? value;
 }
 
-async function onCopy(text: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(text);
-    ElMessage.success("已复制到剪贴板");
-  } catch {
-    ElMessage.error("复制失败，请手动选择并复制内容");
-  }
+function environmentLabel(value: string): string {
+  return ({ production: "生产", test: "测试", development: "开发", unconfigured: "未配置" } as Record<string, string>)[value] ?? value;
 }
 
-async function onRevoke(row: PatInfo): Promise<void> {
-  try {
-    await ElMessageBox.confirm(
-      `吊销「${row.name || "无备注令牌"}」后，使用它的 MCP 客户端将立即断开。`,
-      "确认吊销接入令牌",
-      { type: "warning", confirmButtonText: "吊销", cancelButtonText: "取消" },
-    );
-    await revokeToken(row.id);
-    await reload();
-    ElMessage.success("已吊销");
-  } catch (err) {
-    if (err !== "cancel" && err !== "close") ElMessage.error((err as Error).message);
-  }
+function formatTime(value: string | null): string {
+  return value ? new Date(value).toLocaleString("zh-CN") : "尚未记录";
 }
-
-function formatTime(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString("zh-CN") : "-";
-}
-
-onMounted(reload);
-onBeforeUnmount(() => {
-  createdToken.value = "";
-});
 </script>
 
 <template>
-  <h1 class="page-title">接入设置</h1>
-  <p class="page-description">
-    接入令牌（PAT）用于 WorkBuddy 等 MCP 客户端连接 SkillHive。
-    生成后把下方配置片段填入客户端的 MCP 配置文件（如 ~/.workbuddy/mcp.json），重启客户端生效。
-  </p>
-
-  <!-- 生成新令牌 -->
-  <el-card style="width: 100%; margin-bottom: 16px">
-    <div class="token-create-row">
-      <el-input
-        v-model="newName"
-        placeholder="备注（可选），如：工作 Mac 的 WorkBuddy"
-        maxlength="100"
-        @keyup.enter="onCreate"
-      />
-      <el-button type="primary" :loading="creating" @click="onCreate">生成令牌</el-button>
-    </div>
-
-    <!-- 令牌明文仅显示一次 -->
-    <template v-if="createdToken">
-      <el-alert type="success" :closable="false" style="margin-top: 16px" title="令牌已生成（仅显示一次，请立即保存）" />
-      <div class="token-box">
-        <code>{{ createdToken }}</code>
-        <el-button size="small" @click="onCopy(createdToken)">复制令牌</el-button>
+  <main class="page-shell">
+    <section class="page-heading">
+      <div>
+        <p>查看官方连接器的企业地址、构建、联调和平台发布状态。需求探索规则请在“应用”中管理。</p>
       </div>
-      <p style="font-size: 13px; color: var(--text-secondary); margin: 12px 0 4px">
-        MCP 配置片段（已填入令牌，直接粘贴到配置文件）：
-      </p>
-      <pre class="config-box">{{ configSnippet }}</pre>
-      <el-button size="small" @click="onCopy(configSnippet)">复制配置</el-button>
-    </template>
-  </el-card>
-
-  <!-- 令牌列表 -->
-  <el-card style="width: 100%">
-    <el-empty v-if="loadFailed && !loading" description="令牌列表加载失败">
-      <el-button type="primary" @click="reload">重新加载</el-button>
-    </el-empty>
-    <el-empty v-else-if="!loading && tokens.length === 0" description="还没有接入令牌，请按需生成" />
-    <el-table v-else :data="tokens" v-loading="loading" size="small" style="width: 100%">
-      <el-table-column prop="name" label="备注">
-        <template #default="{ row }">{{ row.name || "（无备注）" }}</template>
-      </el-table-column>
-      <el-table-column label="创建时间" width="160">
-        <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
-      </el-table-column>
-      <el-table-column label="最近使用" width="160">
-        <template #default="{ row }">{{ formatTime(row.lastUsedAt) }}</template>
-      </el-table-column>
-      <el-table-column label="状态" width="80">
-        <template #default="{ row }">
-          <el-tag :type="row.revoked ? 'info' : 'success'" size="small">
-            {{ row.revoked ? "已吊销" : "有效" }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="90">
-        <template #default="{ row }">
-          <el-button
-            v-if="!row.revoked"
-            link
-            type="danger"
-            size="small"
-            @click="onRevoke(row)"
-          >
-            吊销
-          </el-button>
-        </template>
-      </el-table-column>
-    </el-table>
-  </el-card>
+    </section>
+    <el-alert v-if="loadError" :title="loadError" type="error" show-icon :closable="false">
+      <template #default><el-button link type="primary" @click="load">重试</el-button></template>
+    </el-alert>
+    <el-card v-loading="loading" shadow="never" class="content-card">
+      <template #header><strong>WorkBuddy 官方连接器</strong></template>
+      <template v-if="connector">
+        <el-alert
+          v-if="connector.configurationIssues.length"
+          :title="connector.configurationIssues.join('；')"
+          type="warning"
+          show-icon
+          :closable="false"
+          style="margin-bottom: 16px"
+        />
+        <el-alert
+          v-if="connector.launchIssues.length"
+          title="尚未达到全员发布条件"
+          :description="connector.launchIssues.join('；')"
+          type="info"
+          show-icon
+          :closable="false"
+          style="margin-bottom: 16px"
+        />
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="Source">{{ connector.source }}</el-descriptions-item>
+          <el-descriptions-item label="包版本">{{ connector.packageVersion }}</el-descriptions-item>
+          <el-descriptions-item label="企业 MCP 地址">{{ connector.mcpUrl || '待 IT 配置' }}</el-descriptions-item>
+          <el-descriptions-item label="部署环境">{{ environmentLabel(connector.environment) }}</el-descriptions-item>
+          <el-descriptions-item label="最低 WorkBuddy 版本">{{ connector.minClientVersion }}</el-descriptions-item>
+          <el-descriptions-item label="服务端协议">{{ connector.protocolVersion }}</el-descriptions-item>
+          <el-descriptions-item label="平台审核状态">{{ reviewStatusLabel(connector.reviewStatus) }}</el-descriptions-item>
+          <el-descriptions-item label="正式市场入口">
+            <a v-if="connector.marketUrl" :href="connector.marketUrl" target="_blank" rel="noopener noreferrer">打开入口</a>
+            <span v-else>待审核通过</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="最近实测客户端">{{ connector.verifiedClientVersion || '尚未记录' }}</el-descriptions-item>
+          <el-descriptions-item label="实测操作系统">{{ connector.verifiedOs || '尚未记录' }}</el-descriptions-item>
+          <el-descriptions-item label="最近实测时间">{{ formatTime(connector.verifiedAt) }}</el-descriptions-item>
+          <el-descriptions-item label="正式包构建条件">
+            <el-tag :type="connector.readyForPackageBuild ? 'success' : 'warning'">
+              {{ connector.readyForPackageBuild ? '地址已就绪' : '地址未就绪' }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="真实客户端联调条件">
+            <el-tag :type="connector.readyForClientTest ? 'success' : 'warning'">
+              {{ connector.readyForClientTest ? '可以开始联调' : '配置未就绪' }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="全员发布条件">
+            <el-tag :type="connector.readyForLaunch ? 'success' : 'warning'">
+              {{ connector.readyForLaunch ? '仓库侧证据已齐' : `仍缺 ${connector.launchIssues.length} 项` }}
+            </el-tag>
+          </el-descriptions-item>
+        </el-descriptions>
+      </template>
+      <el-empty v-else-if="!loading && !loadError" description="暂无连接器配置" />
+    </el-card>
+  </main>
 </template>
-
-<style scoped>
-.token-box {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 12px;
-  padding: 10px 12px;
-  background: var(--el-fill-color-light);
-  border-radius: 6px;
-}
-.token-box code {
-  font-family: ui-monospace, monospace;
-  font-size: 13px;
-  word-break: break-all;
-}
-.config-box {
-  padding: 12px;
-  font-size: 12px;
-  font-family: ui-monospace, monospace;
-  background: var(--el-fill-color-light);
-  border-radius: 6px;
-  overflow-x: auto;
-}
-.token-create-row {
-  display: flex;
-  gap: 12px;
-}
-
-@media (max-width: 640px) {
-  .token-create-row,
-  .token-box {
-    align-items: stretch;
-    flex-direction: column;
-  }
-}
-</style>

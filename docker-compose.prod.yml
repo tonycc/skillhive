@@ -5,7 +5,7 @@
 #   2. docker compose -f docker-compose.prod.yml up -d --build
 #
 # 服务拓扑：
-#   console (8080)  → 员工入口（网页）
+#   console (8080)  → 管理员运营平台（网页）
 #   registry (3001) → CLI publish / sync 直接访问
 #   mcp-server (3100) → WorkBuddy MCP 配置指向
 #   postgres        → 仅容器网络内部，不对外暴露
@@ -105,6 +105,11 @@ services:
         condition: service_healthy
       mcp-server:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
 volumes:

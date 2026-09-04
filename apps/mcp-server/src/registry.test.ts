@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchVisibleSkillFile, type CallerIdentity } from "./registry.js";
+import { fetchVisibleSkillFile, resolvePat, type CallerIdentity } from "./registry.js";
 
 const identity: CallerIdentity = {
+  subjectType: "employee",
   id: "11111111-1111-4111-8111-111111111111",
   email: "member@example.com",
   name: "Member",
-  role: "member",
+  role: "employee",
   departmentId: null,
+  phone: "13800138000",
   tokenId: "22222222-2222-4222-8222-222222222222",
+  scopes: ["skills:read"],
 };
 
 afterEach(() => {
@@ -49,8 +52,30 @@ describe("fetchVisibleSkillFile", () => {
     expect(url.searchParams.get("version")).toBe("1.2.3");
     expect(init.headers).toMatchObject({
       "X-SkillHive-Internal-Token": "i".repeat(32),
-      "X-SkillHive-User-Id": identity.id,
+      "X-SkillHive-Subject-Id": identity.id,
+      "X-SkillHive-Subject-Type": "employee",
+      "X-SkillHive-Employee-Id": identity.id,
       "X-SkillHive-Token-Id": identity.tokenId,
     });
+  });
+});
+
+describe("resolvePat", () => {
+  it("rejects legacy user identities returned by an outdated Registry", async () => {
+    vi.stubEnv("SKILLHIVE_INTERNAL_TOKEN", "i".repeat(32));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: {
+        subjectType: "legacy-user",
+        id: identity.id,
+        email: "legacy@example.invalid",
+        name: "Legacy",
+        role: "member",
+        departmentId: null,
+        tokenId: identity.tokenId,
+        scopes: ["skills:read"],
+      },
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(resolvePat("legacy-token-value-that-is-long-enough")).resolves.toBeNull();
   });
 });

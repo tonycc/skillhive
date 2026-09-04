@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skillhive.local/schemas/exploration-content-1.0.json",
+  "title": "SkillHive Requirement Exploration Content",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title"],
+  "properties": {
+    "title": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "problemDescription": { "type": "string", "maxLength": 8000 },
+    "targetUsers": { "type": "string", "maxLength": 8000 },
+    "currentProcess": { "type": "string", "maxLength": 8000 },
+    "painAndEvidence": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pain"],
+        "properties": {
+          "pain": { "type": "string", "minLength": 1, "maxLength": 8000 },
+          "evidence": { "type": "string", "maxLength": 8000 },
+          "evidenceStatus": {
+            "type": "string",
+            "enum": ["employee_statement", "to_verify"],
+            "default": "employee_statement"
+          }
+        }
+      }
+    },
+    "objectivesAndBenefits": { "type": "string", "maxLength": 8000 },
+    "scope": { "type": "string", "maxLength": 8000 },
+    "nonGoals": { "type": "string", "maxLength": 8000 },
+    "acceptanceCriteria": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "type": "string", "minLength": 1, "maxLength": 8000 }
+    },
+    "constraintsAndRisks": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "type": "string", "minLength": 1, "maxLength": 8000 }
+    },
+    "pendingQuestions": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "type": "string", "minLength": 1, "maxLength": 8000 }
+    },
+    "summary": { "type": "string", "maxLength": 8000 }
+  },
+  "x-skillhive-submit-required": [
+    "title",
+    "problemDescription",
+    "targetUsers",
+    "currentProcess",
+    "painAndEvidence",
+    "objectivesAndBenefits",
+    "scope",
+    "acceptanceCriteria",
+    "summary"
+  ]
+}

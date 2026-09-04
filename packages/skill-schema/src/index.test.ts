@@ -3,6 +3,7 @@ import JSZip from "jszip";
 import {
   parseSkillMd,
   parseSkillPackageZip,
+  serializeSkillMd,
   validateResourceFiles,
   validateResourcePath,
 } from "./index.js";
@@ -26,6 +27,30 @@ describe("parseSkillMd", () => {
     expect(() =>
       parseSkillMd(skillMd.replace("https://example.com/icon.png", "javascript:alert(1)")),
     ).toThrow("icon");
+  });
+});
+
+describe("serializeSkillMd", () => {
+  it("round-trips an editable Skill without platform routing metadata", () => {
+    const content = serializeSkillMd({
+      name: "requirement-exploration",
+      description: "可编辑的需求探索规则",
+      version: "1.0.1",
+      category: "产品",
+      tags: ["需求探索"],
+      allowed_tools: ["save_exploration"],
+    }, "# 规则正文\n\n先澄清问题。");
+    expect(parseSkillMd(content)).toEqual({
+      frontmatter: {
+        name: "requirement-exploration",
+        description: "可编辑的需求探索规则",
+        version: "1.0.1",
+        category: "产品",
+        tags: ["需求探索"],
+        allowed_tools: ["save_exploration"],
+      },
+      body: "# 规则正文\n\n先澄清问题。",
+    });
   });
 });
 

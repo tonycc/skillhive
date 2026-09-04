@@ -10,7 +10,7 @@ import { bindPatValidation } from "./authenticated-transport.js";
 getInternalToken();
 const token = process.env.SKILLHIVE_PAT?.trim();
 if (!token) {
-  throw new Error("stdio 模式需要通过 SKILLHIVE_PAT 提供个人接入令牌");
+  throw new Error("stdio 模式需要通过 SKILLHIVE_PAT 提供员工连接器令牌");
 }
 const caller = await resolvePat(token);
 if (!caller) throw new Error("SKILLHIVE_PAT 无效或已撤销");

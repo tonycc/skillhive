@@ -3,11 +3,11 @@ import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import { db, users, skillRequests, skillRequestVotes } from "@skillhive/db";
 import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
-import { requireAuth, type SessionUser } from "../auth.js";
+import { requireAdmin, type SessionUser } from "../auth.js";
 import { consumeRateLimit } from "../security.js";
 
 const app = new Hono<{ Variables: { user: SessionUser } }>();
-app.use("*", requireAuth);
+app.use("*", requireAdmin);
 
 /** GET /api/requests — 许愿列表（身份来自登录会话）。 */
 app.get("/", async (c) => {

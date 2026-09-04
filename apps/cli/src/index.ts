@@ -182,8 +182,13 @@ program
   .description("发布 skill 到 SkillHive Registry（支持单个 SKILL.md、技能包目录或 zip）")
   .argument("<path>", "SKILL.md 文件、技能包目录，或 zip 压缩技能包")
   .option("--changelog <text>", "本次变更说明", "")
-  .action(async (path: string, opts: { changelog: string }) => {
+  .option("--type <type>", "Skill 用途类型：ordinary 或 application", "ordinary")
+  .action(async (path: string, opts: { changelog: string; type: string }) => {
     assertSafeRegistryUrl();
+    if (opts.type !== "ordinary" && opts.type !== "application") {
+      console.error("--type 只能是 ordinary 或 application");
+      process.exit(1);
+    }
     const target = await stat(path).catch(() => null);
     if (!target) {
       console.error(`路径不存在：${path}`);
@@ -237,7 +242,7 @@ program
         "Content-Type": "application/json",
         Authorization: `Bearer ${cred.token}`,
       },
-      body: JSON.stringify({ content, changelog: opts.changelog, files }),
+      body: JSON.stringify({ content, changelog: opts.changelog, files, skillType: opts.type }),
     });
     const json = await res.json();
 

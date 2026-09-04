@@ -1,0 +1,15 @@
+{
+  "name": "SkillHive",
+  "name_zh": "SkillHive 技能蜂巢",
+  "name_en": "SkillHive",
+  "description": "Find and use company skills, explore business requirements, and submit structured results.",
+  "description_zh": "查找并使用公司发布的 Skill，也可按公司统一方法探索和提交业务需求。",
+  "description_en": "Find and use company-published skills, or explore and submit business requirements with company methods.",
+  "source": "skillhive",
+  "type": "mcp",
+  "version": "1.2.0",
+  "minWorkbuddyVersion": "4.24.0",
+  "auth_mode": "token",
+  "examples_zh": ["帮我找一个整理周报的公司 Skill", "列出我可以使用的企业 Skill", "帮我探索一个业务需求", "继续我上次的需求讨论"],
+  "examples_en": ["Find a company skill for preparing weekly reports", "List the enterprise skills I can use", "Help me explore a business requirement", "Continue my previous requirement discussion"]
+}

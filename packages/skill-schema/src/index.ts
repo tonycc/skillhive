@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import JSZip from "jszip";
 
 /**
@@ -108,6 +108,18 @@ export function parseSkillMd(content: string): ParsedSkill {
   }
 
   return { frontmatter: result.data, body: body.trim() };
+}
+
+/** 生成经过同一 frontmatter 规则校验的 SKILL.md。 */
+export function serializeSkillMd(frontmatter: SkillFrontmatter, body: string): string {
+  const validated = skillFrontmatterSchema.parse(frontmatter);
+  const normalizedBody = body.trim();
+  if (!normalizedBody) throw new Error("SKILL.md 正文不能为空");
+  const content = `---\n${stringifyYaml(validated, { lineWidth: 0 }).trim()}\n---\n\n${normalizedBody}\n`;
+  if (utf8ByteLength(content) > SKILL_MD_MAX_BYTES) {
+    throw new Error(`SKILL.md 超过大小上限（${SKILL_MD_MAX_BYTES / 1024}KB）`);
+  }
+  return content;
 }
 
 // ---------- 多文件技能包（scripts/ references/ assets/） ----------

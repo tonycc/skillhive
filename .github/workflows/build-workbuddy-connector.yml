@@ -1,0 +1,47 @@
+name: Build WorkBuddy Connector Review Package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: 构建 WorkBuddy 审核包
+    runs-on: ubuntu-latest
+    env:
+      WORKBUDDY_CONNECTOR_MCP_URL: ${{ secrets.WORKBUDDY_CONNECTOR_MCP_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 检查正式地址已安全配置
+        shell: bash
+        run: test -n "$WORKBUDDY_CONNECTOR_MCP_URL"
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 完整质量门禁
+        run: pnpm check
+
+      - name: 构建并独立校验审核包
+        shell: bash
+        run: |
+          pnpm connector:build -- "$WORKBUDDY_CONNECTOR_MCP_URL"
+          pnpm connector:verify
+
+      - name: 上传短期审核产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: skillhive-workbuddy-review-${{ github.sha }}
+          path: |
+            integrations/workbuddy/dist/*.zip
+            integrations/workbuddy/dist/*.sha256.json
+          if-no-files-found: error
+          retention-days: 7

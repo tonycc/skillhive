@@ -8,10 +8,6 @@ const route = useRoute();
 const router = useRouter();
 
 const isLoginPage = computed(() => route.name === "login");
-const canPublish = computed(
-  () => currentUser.value?.role === "publisher" || currentUser.value?.role === "admin",
-);
-const canViewStats = canPublish;
 const loggingOut = ref(false);
 
 async function onLogout(): Promise<void> {
@@ -30,36 +26,23 @@ async function onLogout(): Promise<void> {
 <template>
   <div class="container">
     <header v-if="!isLoginPage" class="site-header">
-      <router-link to="/" class="site-brand" aria-label="SkillHive 首页">
-        🐝 SkillHive 技能蜂巢
+      <router-link to="/" class="site-brand" aria-label="SkillHive 管理平台首页">
+        🐝 SkillHive 管理平台
       </router-link>
       <nav class="site-nav" aria-label="主导航">
         <router-link to="/" :class="{ active: $route.name === 'home' }">
-          技能市场
+          Skill 管理
         </router-link>
-        <router-link
-          v-if="canViewStats"
-          to="/stats"
-          :class="{ active: $route.name === 'stats' }"
-        >
-          数据看板
-        </router-link>
-        <router-link
-          v-if="canPublish"
-          to="/publish"
-          :class="{ active: $route.name === 'publish' }"
-        >
-          发布技能
-        </router-link>
-        <router-link to="/requests" :class="{ active: $route.name === 'requests' }">
-          许愿墙
-        </router-link>
-        <router-link to="/settings" :class="{ active: $route.name === 'settings' }">
-          接入设置
-        </router-link>
+        <router-link to="/applications" :class="{ active: String($route.name).includes('application') }">应用</router-link>
+        <router-link to="/employees" :class="{ active: $route.name === 'employees' }">员工与令牌</router-link>
+        <router-link to="/explorations" :class="{ active: $route.name === 'explorations' }">探索记录</router-link>
+        <router-link to="/requirements" :class="{ active: $route.name === 'requirements' }">正式需求池</router-link>
+        <router-link to="/stats" :class="{ active: $route.name === 'stats' }">数据看板</router-link>
+        <router-link to="/settings" :class="{ active: $route.name === 'settings' }">WorkBuddy 连接器</router-link>
+        <router-link to="/audit" :class="{ active: $route.name === 'audit' }">审计日志</router-link>
       </nav>
       <div v-if="currentUser" class="user-actions">
-        <span>{{ currentUser.name }}（{{ currentUser.role }}）</span>
+        <span>{{ currentUser.name }}（管理员）</span>
         <button
           type="button"
           class="link-button"

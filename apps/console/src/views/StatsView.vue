@@ -2,8 +2,10 @@
 import { computed, onMounted, ref } from "vue";
 import {
   fetchStatsOverview,
+  fetchExplorationErrorStats,
   fetchSkillStats,
   fetchTrend,
+  type ExplorationErrorStat,
   type StatsOverview,
   type SkillStats,
   type TrendPoint,
@@ -12,6 +14,7 @@ import {
 const overview = ref<StatsOverview | null>(null);
 const skillStats = ref<SkillStats[]>([]);
 const trend = ref<TrendPoint[]>([]);
+const explorationErrors = ref<ExplorationErrorStat[]>([]);
 const loading = ref(true);
 const loadFailed = ref(false);
 
@@ -19,10 +22,11 @@ async function load(): Promise<void> {
   loading.value = true;
   loadFailed.value = false;
   try {
-    [overview.value, skillStats.value, trend.value] = await Promise.all([
+    [overview.value, skillStats.value, trend.value, explorationErrors.value] = await Promise.all([
       fetchStatsOverview(),
       fetchSkillStats(),
       fetchTrend(14),
+      fetchExplorationErrorStats(14),
     ]);
   } catch {
     loadFailed.value = true;
@@ -40,8 +44,7 @@ const maxInvokes = computed(() =>
 </script>
 
 <template>
-  <h1 class="page-title">数据看板</h1>
-  <p class="page-description">查看技能发布量、使用趋势和转化表现。</p>
+  <p class="page-description">分别查看需求探索的持久化结果和技能读取趋势；工具调用量不等于保存或提交成功。</p>
   <el-skeleton v-if="loading" :rows="6" animated />
 
   <el-empty
@@ -79,6 +82,13 @@ const maxInvokes = computed(() =>
         </div>
       </el-col>
     </el-row>
+    <h2 class="category-title">需求探索闭环</h2>
+    <el-row :gutter="16">
+      <el-col :xs="24" :sm="12" :md="6"><div class="stat-card"><div class="stat-value">{{ overview.explorationsStarted }}</div><div class="stat-label">成功启动探索</div></div></el-col>
+      <el-col :xs="24" :sm="12" :md="6"><div class="stat-card"><div class="stat-value">{{ overview.draftsSaved }}</div><div class="stat-label">持久化草稿修订</div></div></el-col>
+      <el-col :xs="24" :sm="12" :md="6"><div class="stat-card"><div class="stat-value">{{ overview.requirementsSubmitted }}</div><div class="stat-label">已进入需求池</div></div></el-col>
+      <el-col :xs="24" :sm="12" :md="6"><div class="stat-card"><div class="stat-value">{{ Math.round(overview.completionRate * 100) }}%</div><div class="stat-label">探索提交率（待补充 {{ overview.needsInformation }}）</div></div></el-col>
+    </el-row>
 
     <!-- 近 14 天调用趋势 -->
     <h2 class="category-title">近 14 天调用趋势</h2>
@@ -99,6 +109,16 @@ const maxInvokes = computed(() =>
         </div>
       </div>
     </div>
+
+    <h2 class="category-title">近 14 天需求探索错误</h2>
+    <el-empty v-if="explorationErrors.length === 0" description="近 14 天没有记录到需求探索错误" />
+    <el-table v-else :data="explorationErrors" style="width: 100%">
+      <el-table-column prop="code" label="错误码" min-width="240" />
+      <el-table-column prop="count" label="次数" sortable width="120" />
+      <el-table-column label="最近发生" width="200">
+        <template #default="{ row }">{{ row.lastOccurredAt ? new Date(row.lastOccurredAt).toLocaleString("zh-CN") : "—" }}</template>
+      </el-table-column>
+    </el-table>
 
     <!-- 按技能统计 -->
     <h2 class="category-title">技能使用排行</h2>

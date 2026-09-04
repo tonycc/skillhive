@@ -1,6 +1,6 @@
 # 自动部署到阿里云 ECS（SCP 直传模式，不依赖镜像仓库）：
-#   质量门禁（lint + test + build）→ 构建镜像 → docker save 打包
-#   → scp 直传服务器 → docker load → compose 重启
+#   完整质量门禁 → 构建带 commit 标签的镜像 → docker save 打包
+#   → scp 直传服务器 → 生产配置门禁 → compose 健康切换；失败自动回到原镜像
 #
 # 需要在仓库 Settings → Secrets and variables → Actions 配置（仅 3 个）：
 #   ECS_HOST        服务器公网 IP / 域名
@@ -9,7 +9,7 @@
 #
 # 服务器一次性准备（见 README「生产部署」节）：
 #   安装 Docker + compose 插件；/opt/skillhive/.env 按 .env.example 配好；
-#   安全组放行 Console（8080）与 MCP（3100）端口
+#   原始端口保持回环绑定，由受信 TLS 反向代理提供 Console 与 /mcp
 
 name: Deploy
 
@@ -30,9 +30,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
-      - run: pnpm test
-      - run: pnpm build
+      - run: pnpm check
+
+      - name: 生产依赖安全审计
+        run: pnpm audit --prod --audit-level high
 
   deploy:
     name: 构建镜像并部署
@@ -43,12 +44,12 @@ jobs:
 
       - name: 构建镜像
         run: |
-          docker build -f deploy/Dockerfile.server -t skillhive-server:0.1.0 .
-          docker build -f deploy/Dockerfile.console -t skillhive-console:0.1.0 .
+          docker build -f deploy/Dockerfile.server -t skillhive-server:${{ github.sha }} .
+          docker build -f deploy/Dockerfile.console -t skillhive-console:${{ github.sha }} .
 
       - name: 打包镜像
         run: |
-          docker save skillhive-server:0.1.0 skillhive-console:0.1.0 | gzip > images.tar.gz
+          docker save skillhive-server:${{ github.sha }} skillhive-console:${{ github.sha }} | gzip > images.tar.gz
           ls -lh images.tar.gz
 
       - name: 下发镜像包与 compose 文件
@@ -57,7 +58,7 @@ jobs:
           host: ${{ secrets.ECS_HOST }}
           username: ${{ secrets.ECS_USER }}
           key: ${{ secrets.ECS_SSH_KEY }}
-          source: "images.tar.gz,docker-compose.prod.yml"
+          source: "images.tar.gz,docker-compose.prod.yml,scripts/deploy/remote-deploy.sh"
           target: /opt/skillhive/
           strip_components: 0
 
@@ -70,9 +71,4 @@ jobs:
           script: |
             set -e
             cd /opt/skillhive
-            docker load < images.tar.gz
-            rm -f images.tar.gz
-            # 固定项目名：复用既有容器命名与 postgres 数据卷（skillhive_pgdata）
-            export COMPOSE_PROJECT_NAME=skillhive
-            docker compose -f docker-compose.prod.yml up -d
-            docker image prune -f
+            SKILLHIVE_DEPLOY_SHA=${{ github.sha }} sh scripts/deploy/remote-deploy.sh

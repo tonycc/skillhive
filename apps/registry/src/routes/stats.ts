@@ -1,12 +1,12 @@
 import { Hono } from "hono";
-import { db, skills, usageEvents } from "@skillhive/db";
-import { count, eq, gte, sql } from "drizzle-orm";
-import { requirePublisher } from "../auth.js";
+import { db, explorationAuditEvents, explorationRevisions, explorations, requirements, skills, usageEvents } from "@skillhive/db";
+import { and, count, desc, eq, gte, sql } from "drizzle-orm";
+import { requireAdmin } from "../auth.js";
 
 const app = new Hono();
 
-// 使用统计可能泄露团队行为，仅 publisher / admin 可查看。
-app.use("*", requirePublisher);
+// 使用统计属于管理端运营数据，仅管理员可查看。
+app.use("*", requireAdmin);
 
 interface EventCounts {
   views: number;
@@ -40,12 +40,54 @@ app.get("/overview", async (c) => {
 
   const counts = emptyCounts();
   for (const r of eventRows) accumulate(counts, r.event, r.value);
+  const [[started], [saved], [submitted], [needsInformation]] = await Promise.all([
+    db.select({ value: count() }).from(explorations),
+    db.select({ value: count() }).from(explorationRevisions),
+    db.select({ value: count() }).from(requirements),
+    db.select({ value: count() }).from(requirements).where(eq(requirements.reviewStatus, "needs_information")),
+  ]);
+  const startedCount = started?.value ?? 0;
+  const submittedCount = submitted?.value ?? 0;
 
   return c.json({
     data: {
       publishedSkills: skillRow?.value ?? 0,
       ...counts,
+      explorationsStarted: startedCount,
+      draftsSaved: saved?.value ?? 0,
+      requirementsSubmitted: submittedCount,
+      needsInformation: needsInformation?.value ?? 0,
+      completionRate: startedCount === 0 ? 0 : submittedCount / startedCount,
     },
+  });
+});
+
+/** GET /api/stats/exploration-errors?days=14 — 仅聚合错误码，不复制需求正文。 */
+app.get("/exploration-errors", async (c) => {
+  const requestedDays = Number(c.req.query("days") ?? 14);
+  const days = Number.isFinite(requestedDays)
+    ? Math.min(Math.max(Math.trunc(requestedDays), 1), 90)
+    : 14;
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1_000);
+  const codeExpression = sql<string>`${explorationAuditEvents.metadata}->>'code'`;
+  const rows = await db.select({
+    code: codeExpression,
+    count: count(),
+    lastOccurredAt: sql<string | null>`max(${explorationAuditEvents.createdAt})::text`,
+  }).from(explorationAuditEvents)
+    .where(and(
+      eq(explorationAuditEvents.action, "exploration.error"),
+      gte(explorationAuditEvents.createdAt, since),
+    ))
+    .groupBy(codeExpression)
+    .orderBy(desc(count()));
+  return c.json({
+    data: rows
+      .filter((row) => Boolean(row.code))
+      .map((row) => ({
+        ...row,
+        lastOccurredAt: row.lastOccurredAt ? new Date(row.lastOccurredAt).toISOString() : null,
+      })),
   });
 });
 

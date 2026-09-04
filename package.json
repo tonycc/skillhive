@@ -16,10 +16,17 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint .",
     "test": "vitest run",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm connector:validate && pnpm build",
     "db:generate": "pnpm --filter @skillhive/db db:generate",
     "db:migrate": "pnpm --filter @skillhive/db db:migrate",
-    "db:studio": "pnpm --filter @skillhive/db db:studio"
+    "db:studio": "pnpm --filter @skillhive/db db:studio",
+    "connector:validate": "node integrations/workbuddy/validate.mjs",
+    "connector:build": "node integrations/workbuddy/build.mjs",
+    "connector:verify": "node integrations/workbuddy/verify-build.mjs",
+    "validate:production": "node scripts/validate-production-env.mjs",
+    "smoke:workbuddy": "pnpm --filter @skillhive/registry smoke:workbuddy",
+    "load:workbuddy": "pnpm --filter @skillhive/mcp-server load:workbuddy",
+    "cleanup:explorations": "pnpm --filter @skillhive/registry cleanup:explorations"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

@@ -7,10 +7,11 @@ import type { McpServer, RegisteredPrompt } from "@modelcontextprotocol/sdk/serv
 import { createServer, refreshSkillPrompts, type CallerIdentity } from "./server.js";
 import { getInternalToken, resolvePat, validatePatSession } from "./registry.js";
 import { parsePublicMcpUrl } from "./public-url.js";
+import { createKeyedRateLimiter, type RateLimitResult } from "./request-rate-limit.js";
 
 const INTERNAL_TOKEN = getInternalToken();
 const AUTH_HINT =
-  "缺少或无效的接入令牌：请在 SkillHive Console「接入设置」生成令牌，并为 MCP 请求配置 Authorization: Bearer <令牌>";
+  "缺少或无效的员工接入令牌：请联系公司 SkillHive 管理员领取或补发，并为 MCP 请求配置 Authorization: Bearer <令牌>";
 const PUBLIC_MCP_URL = process.env.PUBLIC_MCP_URL?.trim();
 const FORCE_HTTPS = process.env.NODE_ENV === "production" && process.env.SKILLHIVE_ALLOW_HTTP !== "1";
 const { messagesPath: publicMessagesPath } = parsePublicMcpUrl(
@@ -29,6 +30,18 @@ const SSE_MAX_AGE_MS = boundedInteger(
   8 * 60 * 60 * 1_000,
   60_000,
   24 * 60 * 60 * 1_000,
+);
+const MAX_REQUESTS_PER_TOKEN = boundedInteger(
+  process.env.MCP_MAX_REQUESTS_PER_TOKEN,
+  240,
+  60,
+  10_000,
+);
+const MAX_PREAUTH_REQUESTS_PER_IP = boundedInteger(
+  process.env.MCP_MAX_PREAUTH_REQUESTS_PER_IP,
+  10_000,
+  1_000,
+  100_000,
 );
 
 function boundedInteger(raw: string | undefined, fallback: number, min: number, max: number): number {
@@ -58,31 +71,6 @@ async function resolveCaller(req: express.Request): Promise<CallerIdentity | nul
   return token ? resolvePat(token) : null;
 }
 
-/** 有界的内存限流器，限制对 PAT 解析端点的暴力请求；生产多副本可在网关再加全局限流。 */
-function createRateLimiter(windowMs: number, max: number) {
-  const buckets = new Map<string, { count: number; resetAt: number }>();
-  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const now = Date.now();
-    let key = req.ip || req.socket.remoteAddress || "unknown";
-    if (buckets.size >= 10_000 && !buckets.has(key)) {
-      for (const [key, bucket] of buckets) if (bucket.resetAt <= now) buckets.delete(key);
-      if (buckets.size >= 10_000) key = "__overflow__";
-    }
-    const current = buckets.get(key);
-    const bucket = !current || current.resetAt <= now ? { count: 0, resetAt: now + windowMs } : current;
-    bucket.count += 1;
-    buckets.set(key, bucket);
-    res.setHeader("RateLimit-Limit", String(max));
-    res.setHeader("RateLimit-Remaining", String(Math.max(0, max - bucket.count)));
-    if (bucket.count > max) {
-      res.setHeader("Retry-After", String(Math.ceil((bucket.resetAt - now) / 1_000)));
-      res.status(429).json({ error: "请求过于频繁，请稍后重试" });
-      return;
-    }
-    next();
-  };
-}
-
 const app = express();
 app.disable("x-powered-by");
 if (process.env.TRUST_PROXY === "1") app.set("trust proxy", 1);
@@ -109,23 +97,78 @@ app.get("/health", (_req, res) => {
   });
 });
 
-const authRateLimit = createRateLimiter(60_000, 60);
-const internalRateLimit = createRateLimiter(60_000, 120);
+// 前置 IP 限制只挡异常洪泛；无效凭证另计数，认证成功后按令牌隔离正常业务额度。
+const preAuthRateLimit = createKeyedRateLimiter(60_000, MAX_PREAUTH_REQUESTS_PER_IP);
+const invalidAuthRateLimit = createKeyedRateLimiter(60_000, 60);
+const authenticatedRateLimit = createKeyedRateLimiter(60_000, MAX_REQUESTS_PER_TOKEN);
+const internalRateLimit = createKeyedRateLimiter(60_000, 120);
+
+function requestAddress(req: express.Request): string {
+  return req.ip || req.socket.remoteAddress || "unknown";
+}
+
+function rejectRateLimited(res: express.Response, rate: RateLimitResult): void {
+  res.setHeader("RateLimit-Limit", String(rate.limit));
+  res.setHeader("RateLimit-Remaining", String(rate.remaining));
+  res.setHeader("Retry-After", String(rate.retryAfterSeconds));
+  res.status(429).json({ error: "请求过于频繁，请稍后重试" });
+}
+
+function setRateHeaders(res: express.Response, rate: RateLimitResult): void {
+  res.setHeader("RateLimit-Limit", String(rate.limit));
+  res.setHeader("RateLimit-Remaining", String(rate.remaining));
+}
+
+async function resolveRateLimitedCaller(
+  req: express.Request,
+  res: express.Response,
+): Promise<CallerIdentity | null> {
+  const address = requestAddress(req);
+  const preAuthRate = preAuthRateLimit.consume(address);
+  if (!preAuthRate.allowed) {
+    rejectRateLimited(res, preAuthRate);
+    return null;
+  }
+  const caller = await resolveCaller(req);
+  if (!caller) {
+    const invalidRate = invalidAuthRateLimit.consume(address);
+    if (!invalidRate.allowed) rejectRateLimited(res, invalidRate);
+    else {
+      setRateHeaders(res, invalidRate);
+      res.status(401).json({ error: AUTH_HINT });
+    }
+    return null;
+  }
+  const authenticatedRate = authenticatedRateLimit.consume(caller.tokenId);
+  if (!authenticatedRate.allowed) {
+    rejectRateLimited(res, authenticatedRate);
+    return null;
+  }
+  setRateHeaders(res, authenticatedRate);
+  return caller;
+}
+
+function limitInternalRequest(req: express.Request, res: express.Response): boolean {
+  const rate = internalRateLimit.consume(requestAddress(req));
+  if (!rate.allowed) {
+    rejectRateLimited(res, rate);
+    return false;
+  }
+  setRateHeaders(res, rate);
+  return true;
+}
 
 // ---------- 新版 Streamable HTTP（无状态，每个请求重新校验 PAT） ----------
 
-app.all("/mcp", authRateLimit, async (req, res, next) => {
+app.all("/mcp", async (req, res, next) => {
   try {
     if (req.method !== "POST") {
       res.setHeader("Allow", "POST");
       res.status(405).json({ error: "该 MCP 端点仅接受 POST 请求" });
       return;
     }
-    const caller = await resolveCaller(req);
-    if (!caller) {
-      res.status(401).json({ error: AUTH_HINT });
-      return;
-    }
+    const caller = await resolveRateLimitedCaller(req, res);
+    if (!caller) return;
     const { server } = await createServer(caller);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => {
@@ -161,13 +204,10 @@ async function closeSseSession(sessionId: string): Promise<void> {
   await Promise.allSettled([session.transport.close(), session.server.close()]);
 }
 
-app.get("/sse", authRateLimit, async (req, res, next) => {
+app.get("/sse", async (req, res, next) => {
   try {
-    const caller = await resolveCaller(req);
-    if (!caller) {
-      res.status(401).json({ error: AUTH_HINT });
-      return;
-    }
+    const caller = await resolveRateLimitedCaller(req, res);
+    if (!caller) return;
     if (sseSessions.size + pendingSseSessions >= MAX_SSE_SESSIONS) {
       res.status(503).json({ error: "当前 MCP 会话已满，请稍后重试" });
       return;
@@ -210,7 +250,7 @@ app.get("/sse", authRateLimit, async (req, res, next) => {
   }
 });
 
-app.post("/messages", authRateLimit, async (req, res, next) => {
+app.post("/messages", async (req, res, next) => {
   try {
     const sessionId = typeof req.query.sessionId === "string" ? req.query.sessionId : "";
     const session = sseSessions.get(sessionId);
@@ -218,9 +258,9 @@ app.post("/messages", authRateLimit, async (req, res, next) => {
       res.status(404).json({ error: "MCP 会话不存在或已失效，请重新连接" });
       return;
     }
-    const caller = await resolveCaller(req);
+    const caller = await resolveRateLimitedCaller(req, res);
+    if (!caller) return;
     if (
-      !caller ||
       caller.id !== session.caller.id ||
       !safeEqual(caller.tokenId, session.caller.tokenId)
     ) {
@@ -241,7 +281,8 @@ app.post("/messages", authRateLimit, async (req, res, next) => {
 
 // ---------- 内部接口（服务间调用，不对客户端开放） ----------
 
-app.post("/internal/prompts-changed", internalRateLimit, async (req, res) => {
+app.post("/internal/prompts-changed", async (req, res) => {
+  if (!limitInternalRequest(req, res)) return;
   if (!isInternalRequest(req)) {
     res.status(401).json({ error: "未授权的内部调用" });
     return;
@@ -267,7 +308,8 @@ app.post("/internal/prompts-changed", internalRateLimit, async (req, res) => {
   res.json({ ok: true, sessions: sseSessions.size, refreshed, closed, failed });
 });
 
-app.post("/internal/token-revoked", internalRateLimit, async (req, res) => {
+app.post("/internal/token-revoked", async (req, res) => {
+  if (!limitInternalRequest(req, res)) return;
   if (!isInternalRequest(req)) {
     res.status(401).json({ error: "未授权的内部调用" });
     return;

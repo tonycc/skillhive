@@ -22,17 +22,8 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
-      - name: 静态检查
-        run: pnpm lint
-
-      - name: 全 workspace 类型检查
-        run: pnpm typecheck
-
-      - name: 单元测试
-        run: pnpm test
-
-      - name: 构建全部 workspace
-        run: pnpm build
+      - name: 完整质量门禁
+        run: pnpm check
 
       - name: 生产依赖安全审计
         run: pnpm audit --prod --audit-level high

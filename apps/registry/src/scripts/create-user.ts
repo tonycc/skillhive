@@ -72,7 +72,7 @@ if (disable || enable) {
       })
       .where(eq(users.id, existing.id));
     if (disable) {
-      // 服务端 API 会额外通知 MCP；离线脚本仍保证 PAT 数据层立即失效。
+      // 历史用户 PAT 已不用于 MCP；离线脚本仍保证遗留凭据在数据层失效。
       await tx
         .update(userTokens)
         .set({ revokedAt: new Date() })

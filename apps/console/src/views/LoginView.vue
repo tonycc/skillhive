@@ -4,7 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { login } from "../api";
 
-/** 全局登录页：未登录访问任何页面都会被路由守卫引导到这里 */
+/** 管理员登录页：员工只通过 WorkBuddy 使用产品。 */
 const route = useRoute();
 const router = useRouter();
 const form = reactive({ email: "", password: "" });
@@ -31,9 +31,9 @@ async function onSubmit(): Promise<void> {
 </script>
 
 <template>
-  <div style="display: flex; justify-content: center; padding-top: 64px">
-    <el-card style="width: 400px">
-      <h1 class="login-title">🐝 SkillHive 技能蜂巢</h1>
+  <div class="login-shell">
+    <el-card class="login-card">
+      <h1 class="login-title">🐝 SkillHive 管理平台</h1>
       <p
         style="
           margin: 0 0 24px;
@@ -42,13 +42,14 @@ async function onSubmit(): Promise<void> {
           color: var(--text-secondary);
         "
       >
-        请使用公司账号登录，账号由 IT 管理员创建
+        仅限管理员登录；员工请在 WorkBuddy 中使用 SkillHive 连接器
       </p>
       <el-form label-position="top" @submit.prevent="onSubmit">
-        <el-form-item label="账号">
+        <el-form-item label="管理员邮箱">
           <el-input
             v-model="form.email"
-            placeholder="邮箱或用户名"
+            placeholder="请输入管理员邮箱"
+            autocomplete="username"
             autofocus
           />
         </el-form-item>
@@ -57,6 +58,7 @@ async function onSubmit(): Promise<void> {
             v-model="form.password"
             type="password"
             show-password
+            autocomplete="current-password"
           />
         </el-form-item>
         <el-button
@@ -73,9 +75,25 @@ async function onSubmit(): Promise<void> {
 </template>
 
 <style scoped>
+.login-shell {
+  display: flex;
+  justify-content: center;
+  padding-top: 64px;
+}
+
+.login-card {
+  width: min(400px, 100%);
+}
+
 .login-title {
   margin: 0 0 8px;
   text-align: center;
   font-size: 24px;
+}
+
+@media (max-width: 480px) {
+  .login-shell {
+    padding-top: 24px;
+  }
 }
 </style>

@@ -1,0 +1,1 @@
+ALTER TABLE "exploration_policies" ADD COLUMN "blocked_skill_version_ids" jsonb DEFAULT '[]'::jsonb NOT NULL;

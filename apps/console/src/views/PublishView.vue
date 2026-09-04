@@ -32,6 +32,7 @@ const pending = ref<PendingPackage | null>(null);
 const changelog = ref("");
 const submitting = ref(false);
 const parsing = ref(false);
+const skillType = ref<"ordinary" | "application">("ordinary");
 let parseRequestId = 0;
 
 async function onFileChange(uploadFile: UploadFile): Promise<void> {
@@ -74,6 +75,7 @@ function onReset(): void {
   parsing.value = false;
   pending.value = null;
   changelog.value = "";
+  skillType.value = "ordinary";
 }
 
 /** base64 长度换算为可读文件大小 */
@@ -86,9 +88,18 @@ async function onSubmit(): Promise<void> {
   if (!pending.value || parsing.value) return;
   submitting.value = true;
   try {
-    await publishSkill(pending.value.content, changelog.value.trim(), pending.value.files);
-    ElMessage.success(`技能「${pending.value.frontmatter.name}」发布成功`);
-    router.push(`/skills/${encodeURIComponent(pending.value.frontmatter.name)}`);
+    await publishSkill(
+      pending.value.content,
+      changelog.value.trim(),
+      pending.value.files,
+      skillType.value,
+    );
+    ElMessage.success(skillType.value === "application"
+      ? `Skill「${pending.value.frontmatter.name}」已进入应用 Skill 候选池`
+      : `Skill「${pending.value.frontmatter.name}」发布成功`);
+    router.push(skillType.value === "application"
+      ? "/applications"
+      : `/skills/${encodeURIComponent(pending.value.frontmatter.name)}`);
   } catch (err) {
     // 版本冲突（409）等错误信息由 Registry 返回，直接展示
     ElMessage.error((err as Error).message);
@@ -96,85 +107,182 @@ async function onSubmit(): Promise<void> {
     submitting.value = false;
   }
 }
+
 </script>
 
 <template>
-  <section aria-labelledby="publish-title">
-    <h1 id="publish-title" class="page-title">发布技能</h1>
-    <p class="page-description">上传经过校验的 SKILL.md 或完整技能包。</p>
+  <section aria-label="发布 Skill" class="publish-panel">
     <div class="form-column">
-    <el-upload
-      drag
-      :auto-upload="false"
-      :show-file-list="false"
-      :disabled="parsing || submitting"
-      accept=".zip,.md"
-      :on-change="onFileChange"
-      style="width: 100%; margin-bottom: 24px"
-    >
-      <div style="padding: 12px">
-        <p style="margin: 0; font-size: 15px">
-          📦 拖拽或点击上传 <strong>技能包 zip</strong> 或 <strong>SKILL.md</strong>
-        </p>
-        <p style="margin: 6px 0 0; font-size: 13px; color: var(--text-secondary)">
-          zip 结构：SKILL.md（根目录必需）+ scripts/ references/ assets/（可选资源），
-          系统自动解压并校验
-        </p>
-      </div>
-    </el-upload>
-
-    <el-skeleton v-if="parsing" :rows="3" animated aria-label="技能包解析中" />
-
-    <!-- 解析结果确认 -->
-    <el-card v-if="pending" style="width: 100%">
-      <el-descriptions :column="2" border size="small">
-        <el-descriptions-item label="技能标识">
-          {{ pending.frontmatter.name }}
-        </el-descriptions-item>
-        <el-descriptions-item label="版本">
-          {{ pending.frontmatter.version ?? "0.1.0" }}
-        </el-descriptions-item>
-        <el-descriptions-item label="描述" :span="2">
-          {{ pending.frontmatter.description }}
-        </el-descriptions-item>
-        <el-descriptions-item label="分类">
-          {{ pending.frontmatter.category ?? "通用" }}
-        </el-descriptions-item>
-        <el-descriptions-item label="来源文件">
-          {{ pending.sourceName }}
-        </el-descriptions-item>
-      </el-descriptions>
-
-      <div style="margin: 12px 0; font-size: 13px">
-        <template v-if="pending.files.length > 0">
-          <p style="margin: 0 0 6px; color: var(--text-secondary)">
-            资源文件（{{ pending.files.length }} 个）：
+      <el-card shadow="never" class="publish-workflow-card">
+        <section class="workflow-step" aria-label="选择 Skill 用途">
+          <div class="workflow-step-label">
+            <span class="step-index">1</span>
+            <strong>选择 Skill 用途</strong>
+          </div>
+          <el-radio-group v-model="skillType" class="skill-type-options">
+            <el-radio value="ordinary" border class="skill-type-option">
+              <span class="skill-type-copy">
+                <strong>普通 Skill</strong>
+                <small>员工可通过企业 Skill 助手检索和使用</small>
+              </span>
+            </el-radio>
+            <el-radio value="application" border class="skill-type-option">
+              <span class="skill-type-copy">
+                <strong>应用 Skill</strong>
+                <small>进入应用候选池，不参与企业助手检索</small>
+              </span>
+            </el-radio>
+          </el-radio-group>
+          <p class="selection-hint">
+            {{ skillType === "application"
+              ? "发布后请前往对应应用，选择满足应用契约的版本并激活。"
+              : "发布后员工可以在 WorkBuddy 中通过企业 Skill 助手找到它。" }}
           </p>
-          <p v-for="f in pending.files" :key="f.path" style="margin: 2px 0">
-            📎 {{ f.path }}
-            <span style="color: var(--text-secondary)">（{{ fileSize(f.contentBase64) }}）</span>
-          </p>
-        </template>
-        <p v-else style="margin: 0; color: var(--text-secondary)">无资源文件（纯提示词技能）</p>
-        <el-alert
-          v-if="pending.skipped.length > 0"
-          type="info"
-          :closable="false"
-          style="margin-top: 8px"
-          title="以下文件不在 scripts/references/assets 目录中，已忽略"
-          :description="pending.skipped.join('、')"
+        </section>
+
+        <el-divider />
+
+        <section class="workflow-step" aria-label="上传 Skill 文件">
+          <div class="workflow-step-label">
+            <span class="step-index">2</span>
+            <strong>上传 Skill 文件</strong>
+          </div>
+          <el-upload
+            drag
+            :auto-upload="false"
+            :show-file-list="false"
+            :disabled="parsing || submitting"
+            accept=".zip,.md"
+            :on-change="onFileChange"
+            class="skill-upload"
+          >
+            <div class="upload-copy">
+              <p>拖拽或点击上传 <strong>Skill 包 zip</strong> 或 <strong>SKILL.md</strong></p>
+              <small>
+                zip 结构：SKILL.md（根目录必需）+ scripts/ references/ assets/（可选资源），
+                系统自动解压并校验
+              </small>
+            </div>
+          </el-upload>
+        </section>
+      </el-card>
+
+      <el-skeleton v-if="parsing" :rows="3" animated aria-label="Skill 包解析中" />
+
+      <!-- 解析结果确认 -->
+      <el-card v-if="pending" class="publish-result-card" shadow="never">
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="Skill 标识">
+            {{ pending.frontmatter.name }}
+          </el-descriptions-item>
+          <el-descriptions-item label="版本">
+            {{ pending.frontmatter.version ?? "0.1.0" }}
+          </el-descriptions-item>
+          <el-descriptions-item label="描述" :span="2">
+            {{ pending.frontmatter.description }}
+          </el-descriptions-item>
+          <el-descriptions-item label="分类">
+            {{ pending.frontmatter.category ?? "通用" }}
+          </el-descriptions-item>
+          <el-descriptions-item label="用途类型">
+            <el-tag :type="skillType === 'application' ? 'warning' : 'info'" effect="plain">
+              {{ skillType === "application" ? "应用 Skill" : "普通 Skill" }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="来源文件">
+            {{ pending.sourceName }}
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <div style="margin: 12px 0; font-size: 13px">
+          <template v-if="pending.files.length > 0">
+            <p style="margin: 0 0 6px; color: var(--text-secondary)">
+              资源文件（{{ pending.files.length }} 个）：
+            </p>
+            <p v-for="f in pending.files" :key="f.path" style="margin: 2px 0">
+              📎 {{ f.path }}
+              <span style="color: var(--text-secondary)">（{{ fileSize(f.contentBase64) }}）</span>
+            </p>
+          </template>
+          <p v-else style="margin: 0; color: var(--text-secondary)">无资源文件（纯提示词技能）</p>
+          <el-alert
+            v-if="pending.skipped.length > 0"
+            type="info"
+            :closable="false"
+            style="margin-top: 8px"
+            title="以下文件不在 scripts/references/assets 目录中，已忽略"
+            :description="pending.skipped.join('、')"
+          />
+        </div>
+
+        <el-input
+          v-model="changelog"
+          placeholder="变更说明（可选）：本次发布/修改了什么"
+          style="margin-bottom: 12px"
         />
-      </div>
 
-      <el-input
-        v-model="changelog"
-        placeholder="变更说明（可选）：本次发布/修改了什么"
-        style="margin-bottom: 12px"
-      />
-
-      <el-button type="primary" :loading="submitting" @click="onSubmit">确认发布</el-button>
-      <el-button @click="onReset">重新选择</el-button>
-    </el-card>
+        <el-button type="primary" :loading="submitting" @click="onSubmit">确认发布</el-button>
+        <el-button @click="onReset">重新选择</el-button>
+      </el-card>
     </div>
   </section>
 </template>
+
+<style scoped>
+.publish-panel { width: 100%; }
+.publish-workflow-card,
+.publish-result-card { width: 100%; }
+.publish-result-card { margin-top: 16px; }
+.workflow-step { width: 100%; }
+.workflow-step-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  font-size: 15px;
+}
+.step-index {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  font-size: 13px;
+  font-weight: 600;
+}
+.skill-type-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+}
+.skill-type-option {
+  width: 100%;
+  height: auto;
+  min-height: 78px;
+  margin: 0;
+  padding: 14px 16px;
+  align-items: flex-start;
+}
+.skill-type-copy {
+  display: grid;
+  gap: 4px;
+  white-space: normal;
+}
+.skill-type-copy strong { color: var(--text); }
+.skill-type-copy small,
+.selection-hint,
+.upload-copy small { color: var(--text-secondary); line-height: 1.55; }
+.selection-hint { margin: 10px 0 0; font-size: 12px; }
+.skill-upload { width: 100%; }
+.upload-copy { padding: 12px; }
+.upload-copy p { margin: 0; font-size: 15px; }
+.upload-copy small { display: block; margin-top: 6px; font-size: 13px; }
+:deep(.skill-type-option .el-radio__input) { margin-top: 3px; }
+
+@media (max-width: 640px) {
+  .skill-type-options { grid-template-columns: 1fr; }
+}
+</style>

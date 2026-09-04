@@ -1,11 +1,10 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
-import { and, count, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { deleteCookie, setCookie } from "hono/cookie";
-import { db, users, userTokens } from "@skillhive/db";
+import { db, employees, employeeTokens, explorationAuditEvents, users, userTokens } from "@skillhive/db";
 import {
-  generatePat,
   hashPassword,
   hashPat,
   issueToken,
@@ -68,11 +67,21 @@ app.post("/login", zValidator("json", loginSchema), async (c) => {
   }
 
   const sessionUser = toSessionUser(user);
-  const token = await issueToken(sessionUser, user.sessionVersion);
   const requestedMode = c.req.header("X-SkillHive-Session-Mode");
   const parsedMode = sessionModeSchema.safeParse(requestedMode);
   const sessionMode = parsedMode.success ? parsedMode.data : "cookie";
+  if (sessionMode === "cookie" && user.role !== "admin") {
+    return c.json({ error: "SkillHive Web 仅供管理员使用" }, 403);
+  }
+  const token = await issueToken(sessionUser, user.sessionVersion, sessionMode);
   if (sessionMode === "cookie") {
+    await db.insert(explorationAuditEvents).values({
+      actorType: "admin",
+      actorId: user.id,
+      action: "admin.login",
+      metadata: {},
+    });
+    // 先完成审计再下发 Cookie；审计失败时不得留下客户端已登录、服务端无记录的状态。
     setCookie(c, SESSION_COOKIE_NAME, token, cookieOptions());
     // Browser 不接收可被页面脚本读取的 token；会话只存在 HttpOnly Cookie。
     return c.json({ data: { user: sessionUser } });
@@ -93,119 +102,44 @@ app.post("/logout", (c) => {
 /** GET /api/auth/me — 从数据库刷新后的当前用户。 */
 app.get("/me", requireAuth, (c) => c.json({ data: c.get("user") }));
 
-// ---------- 个人接入令牌（PAT） ----------
-
-const createTokenSchema = z.object({
-  name: z.string().trim().max(128).default(""),
-});
-
-/** POST /api/auth/tokens — 生成接入令牌（明文仅此一次返回）。 */
-app.post("/tokens", requireAuth, zValidator("json", createTokenSchema), async (c) => {
-  const user = c.get("user");
-  const rate = consumeRateLimit("create-pat", user.id, 10, 60 * 60_000);
-  if (!rate.allowed) {
-    c.header("Retry-After", String(rate.retryAfterSeconds));
-    return c.json({ error: "创建令牌过于频繁，请稍后再试" }, 429);
-  }
-
-  const [active] = await db
-    .select({ value: count() })
-    .from(userTokens)
-    .where(and(eq(userTokens.userId, user.id), isNull(userTokens.revokedAt)));
-  if ((active?.value ?? 0) >= 10) {
-    return c.json({ error: "每个账号最多保留 10 个有效令牌，请先吊销不再使用的令牌" }, 409);
-  }
-
-  const { name } = c.req.valid("json");
-  const { token, hash } = generatePat();
-  const [row] = await db
-    .insert(userTokens)
-    .values({ userId: user.id, name, tokenHash: hash })
-    .returning({ id: userTokens.id, createdAt: userTokens.createdAt });
-  return c.json({ data: { id: row?.id, token, name } }, 201);
-});
-
-/** GET /api/auth/tokens — 列出我的令牌（不含明文）。 */
-app.get("/tokens", requireAuth, async (c) => {
-  const user = c.get("user");
-  const rows = await db
-    .select({
-      id: userTokens.id,
-      name: userTokens.name,
-      createdAt: userTokens.createdAt,
-      lastUsedAt: userTokens.lastUsedAt,
-      revokedAt: userTokens.revokedAt,
-    })
-    .from(userTokens)
-    .where(eq(userTokens.userId, user.id))
-    .orderBy(desc(userTokens.createdAt));
-  return c.json({ data: rows.map((row) => ({ ...row, revoked: row.revokedAt !== null })) });
-});
-
-const MCP_SERVER_URL = process.env.MCP_SERVER_URL ?? "http://localhost:3100";
-
-if (process.env.NODE_ENV === "production") {
-  try {
-    const url = new URL(MCP_SERVER_URL);
-    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error();
-  } catch {
-    throw new Error("生产环境 MCP_SERVER_URL 必须是有效的 http(s) URL");
-  }
-}
-
-function notifyTokenRevoked(tokenId: string): void {
-  const internalToken = process.env.SKILLHIVE_INTERNAL_TOKEN?.trim();
-  if (!internalToken) return;
-  void fetch(`${MCP_SERVER_URL}/internal/token-revoked`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-SkillHive-Internal-Token": internalToken,
-    },
-    body: JSON.stringify({ tokenId }),
-    signal: AbortSignal.timeout(3_000),
-  }).then((response) => {
-    if (!response.ok) console.warn(`[skillhive] MCP 令牌撤销通知返回 ${response.status}`);
-  }).catch((error: unknown) => {
-    console.warn("[skillhive] MCP 令牌撤销通知失败：", error instanceof Error ? error.message : error);
-  });
-}
-
-/** DELETE /api/auth/tokens/:id — 吊销我的令牌（仅本人可操作）。 */
-app.delete("/tokens/:id", requireAuth, async (c) => {
-  const user = c.get("user");
-  const id = c.req.param("id");
-  if (!z.string().uuid().safeParse(id).success) return c.json({ error: "无效的令牌 ID" }, 400);
-  const [updated] = await db
-    .update(userTokens)
-    .set({ revokedAt: new Date() })
-    .where(and(eq(userTokens.id, id), eq(userTokens.userId, user.id), isNull(userTokens.revokedAt)))
-    .returning({ id: userTokens.id });
-  if (!updated) return c.json({ error: "令牌不存在、已吊销或不属于当前账号" }, 404);
-  notifyTokenRevoked(updated.id);
-  return c.json({ ok: true });
-});
-
 const resolvePatSchema = z.object({ token: z.string().regex(/^sk-[a-f0-9]{48}$/) });
 
-/** POST /api/auth/resolve-pat — MCP Server 专用：校验 PAT 并返回令牌与用户身份。 */
+/** POST /api/auth/resolve-pat — MCP Server 专用：只解析员工连接器令牌。 */
 app.post("/resolve-pat", requireInternalToken, zValidator("json", resolvePatSchema), async (c) => {
   const { token } = c.req.valid("json");
-  const row = await db.query.userTokens.findFirst({
-    where: and(eq(userTokens.tokenHash, hashPat(token)), isNull(userTokens.revokedAt)),
-  });
-  if (!row) return c.json({ error: "无效或已吊销的接入令牌" }, 401);
+  const tokenHash = hashPat(token);
+  const [employeeRow] = await db.select({
+    id: employees.id,
+    phone: employees.phone,
+    email: employees.email,
+    name: employees.name,
+    departmentId: employees.departmentId,
+    tokenId: employeeTokens.id,
+    scopes: employeeTokens.scopes,
+    expiresAt: employeeTokens.expiresAt,
+  }).from(employeeTokens).innerJoin(employees, eq(employeeTokens.employeeId, employees.id)).where(and(
+    eq(employeeTokens.tokenHash, tokenHash),
+    isNull(employeeTokens.revokedAt),
+    eq(employees.status, "active"),
+    sql`${employeeTokens.expiresAt} > now()`,
+  )).limit(1);
+  if (employeeRow) {
+    void db.update(employeeTokens).set({ lastUsedAt: new Date() })
+      .where(eq(employeeTokens.id, employeeRow.tokenId)).catch(() => {});
+    return c.json({ data: {
+      subjectType: "employee",
+      ...employeeRow,
+      role: "employee",
+    } });
+  }
 
-  const user = await db.query.users.findFirst({ where: eq(users.id, row.userId) });
-  if (!user || user.disabledAt !== null) return c.json({ error: "令牌所属账号不存在或已停用" }, 401);
-
-  void db.update(userTokens).set({ lastUsedAt: new Date() }).where(eq(userTokens.id, row.id)).catch(() => {});
-  return c.json({ data: { ...toSessionUser(user), tokenId: row.id } });
+  return c.json({ error: "员工接入令牌无效、已吊销或已停用" }, 401);
 });
 
 const validatePatSessionSchema = z.object({
   tokenId: z.string().uuid(),
-  userId: z.string().uuid(),
+  subjectId: z.string().uuid(),
+  subjectType: z.literal("employee"),
 });
 
 /** POST /api/auth/validate-pat-session — 长连接每次消息前确认令牌仍有效。 */
@@ -214,18 +148,16 @@ app.post(
   requireInternalToken,
   zValidator("json", validatePatSessionSchema),
   async (c) => {
-    const { tokenId, userId } = c.req.valid("json");
-    const token = await db.query.userTokens.findFirst({
-      where: and(
-        eq(userTokens.id, tokenId),
-        eq(userTokens.userId, userId),
-        isNull(userTokens.revokedAt),
-      ),
-    });
-    if (!token) return c.json({ error: "接入令牌已失效" }, 401);
-    const user = await db.query.users.findFirst({ where: eq(users.id, userId) });
-    if (!user || user.disabledAt !== null) return c.json({ error: "令牌所属账号不存在或已停用" }, 401);
-    return c.json({ data: { valid: true, user: toSessionUser(user) } });
+    const { tokenId, subjectId } = c.req.valid("json");
+    const [row] = await db.select({ id: employees.id }).from(employeeTokens)
+      .innerJoin(employees, eq(employeeTokens.employeeId, employees.id))
+      .where(and(
+        eq(employeeTokens.id, tokenId), eq(employeeTokens.employeeId, subjectId),
+        isNull(employeeTokens.revokedAt), eq(employees.status, "active"),
+        sql`${employeeTokens.expiresAt} > now()`,
+      )).limit(1);
+    if (!row) return c.json({ error: "员工接入令牌已失效" }, 401);
+    return c.json({ data: { valid: true } });
   },
 );
 
@@ -270,6 +202,7 @@ app.patch(
         })
         .where(eq(users.id, userId))
         .returning({ id: users.id, disabledAt: users.disabledAt });
+      // 旧个人 PAT 已不能用于 MCP；保留停用账号时的数据库失效处理，避免历史凭据复活。
       const revoked = disabled
         ? await tx
             .update(userTokens)
@@ -280,7 +213,6 @@ app.patch(
       return { updated, revoked };
     });
     if (!result?.updated) return c.json({ error: "账号不存在" }, 404);
-    for (const token of result.revoked) notifyTokenRevoked(token.id);
     return c.json({
       data: {
         id: result.updated.id,

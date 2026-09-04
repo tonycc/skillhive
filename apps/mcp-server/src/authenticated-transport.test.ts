@@ -5,12 +5,15 @@ import { bindPatValidation } from "./authenticated-transport.js";
 import type { CallerIdentity } from "./registry.js";
 
 const identity: CallerIdentity = {
+  subjectType: "employee",
   id: "11111111-1111-4111-8111-111111111111",
   email: "member@example.com",
   name: "Member",
-  role: "member",
+  role: "employee",
   departmentId: null,
+  phone: "13800138000",
   tokenId: "22222222-2222-4222-8222-222222222222",
+  scopes: ["skills:read"],
 };
 
 function fakeTransport() {
