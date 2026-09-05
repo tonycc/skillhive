@@ -151,6 +151,15 @@ export function validateEntrySkill(skill) {
   ) {
     fail("入口 Skill 必须服从锁定应用 Skill 的完整 Grill Me frontier 协议，不能限制每轮问题数量");
   }
+  if (
+    !skill.includes("AskUserQuestion")
+    || !skill.includes("AskQuestion")
+    || !skill.includes("互斥答案用单选")
+    || !skill.includes("可同时成立的答案用多选")
+    || !skill.includes("降级为同一消息内的编号文本问答")
+  ) {
+    fail("入口 Skill 必须优先使用 WorkBuddy 原生问答弹窗，并声明单选、多选和文本降级规则");
+  }
 }
 
 export function validateEnterpriseSkillAssistant(skill) {

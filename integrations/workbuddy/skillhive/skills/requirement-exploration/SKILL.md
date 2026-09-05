@@ -6,7 +6,7 @@ description: 当员工想讨论、梳理、保存、继续或提交业务需求�
 description_zh: 帮助员工把模糊业务问题整理为可评审需求，并将草稿和正式提交保存到公司服务器。
 description_en: Turn an employee's business problem into a reviewable requirement and save drafts and submissions to the company server.
 allowed-tools: get_connector_status, start_exploration, list_my_explorations, get_exploration, save_exploration, submit_exploration, abandon_exploration, get_skill_file
-version: 1.0.0
+version: 1.1.0
 author: SkillHive
 user-invocable: true
 ---
@@ -33,7 +33,7 @@ user-invocable: true
 
 ## 讨论方法
 
-讨论阶段以后端返回并锁定的应用 Skill 为唯一业务规则。按照其中的 Grill Me 决策树推进：每轮提出当前 frontier 中所有前置条件已明确且彼此不依赖的问题，不设置固定问题数量；员工回答后重新计算 frontier。先理解问题，再讨论方案；员工不知道的数字、事实和约束放入 `pendingQuestions`，不得编造。
+讨论阶段以后端返回并锁定的应用 Skill 为唯一业务规则。按照其中的 Grill Me 决策树推进：每轮提出当前 frontier 中所有前置条件已明确且彼此不依赖的问题，不设置固定问题数量；员工回答后重新计算 frontier。当前 WorkBuddy 客户端支持原生 `AskUserQuestion` / `AskQuestion` 时，优先使用弹窗；互斥答案用单选，可同时成立的答案用多选。原生交互不可用、调用失败或需要自由描述时，降级为同一消息内的编号文本问答。交互形式不得改变完整 frontier，也不得替员工预选或提交答案。先理解问题，再讨论方案；员工不知道的数字、事实和约束放入 `pendingQuestions`，不得编造。
 
 结构化草稿字段：
 

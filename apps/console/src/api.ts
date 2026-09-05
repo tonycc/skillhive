@@ -10,6 +10,7 @@ export interface SkillCard {
   category: string;
   status: string;
   skillType: "ordinary" | "application";
+  triggerPhrases: string[];
 }
 
 export interface SkillDetail extends SkillCard {
@@ -180,6 +181,20 @@ export async function fetchSkills(): Promise<SkillCard[]> {
 export async function fetchSkillDetail(slug: string): Promise<SkillDetail> {
   const json = await get<{ data: SkillDetail }>(`/api/skills/${encodeURIComponent(slug)}`);
   return json.data;
+}
+
+export async function updateSkillTriggerPhrases(
+  slug: string,
+  triggerPhrases: string[],
+): Promise<string[]> {
+  const res = await request(`/api/skills/${encodeURIComponent(slug)}/triggers`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ triggerPhrases }),
+  });
+  handleUnauthorized(res);
+  if (!res.ok) throw await responseError(res, "更新 Skill 触发词失败");
+  return ((await res.json()) as { data: { triggerPhrases: string[] } }).data.triggerPhrases;
 }
 
 /** 只在用户选择预览时读取一个技能资源文件。 */
@@ -673,6 +688,7 @@ export interface ApplicationSummary {
 }
 
 export interface RequirementExplorationApplication extends Omit<ApplicationSummary, "enabled" | "activeVersion"> {
+  triggerPhrases: string[];
   skill: {
     id: string;
     slug: string;
@@ -703,6 +719,19 @@ export async function fetchRequirementExplorationApplication(): Promise<Requirem
   return (await get<{ data: RequirementExplorationApplication }>(
     "/api/admin/applications/requirement-exploration",
   )).data;
+}
+
+export async function updateRequirementExplorationTriggerPhrases(
+  triggerPhrases: string[],
+): Promise<string[]> {
+  const res = await request("/api/admin/applications/requirement-exploration/triggers", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ triggerPhrases }),
+  });
+  handleUnauthorized(res);
+  if (!res.ok) throw await responseError(res, "更新应用触发词失败");
+  return ((await res.json()) as { data: { triggerPhrases: string[] } }).data.triggerPhrases;
 }
 
 export async function initializeRequirementExplorationSkill(): Promise<RequirementExplorationApplication> {

@@ -1,22 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://skillhive.local/protocols/requirement-exploration-grilling-1.1.json",
+  "$id": "https://skillhive.local/protocols/requirement-exploration-grilling-1.0.json",
   "protocol": "grill-me",
-  "version": "1.1",
+  "version": "1.0",
   "decisionModel": "design-tree",
   "questionStrategy": "complete-frontier-per-round",
   "recomputeFrontierAfterEachRound": true,
   "questionFormat": {
     "numbered": true,
     "titled": true,
-    "recommendationRequired": true,
-    "interactionPreference": "workbuddy-native-question",
-    "nativeRequestTypes": ["AskUserQuestion", "AskQuestion"],
-    "singleSelectForMutuallyExclusiveOptions": true,
-    "multiSelectForIndependentOptions": true,
-    "freeTextForOpenEndedFacts": true,
-    "preserveCompleteFrontier": true,
-    "fallback": "numbered-text"
+    "recommendationRequired": true
   },
   "factOwner": "assistant",
   "decisionOwner": "user",

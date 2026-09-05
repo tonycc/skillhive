@@ -25,6 +25,7 @@ import {
 } from "../auth.js";
 import { consumeRateLimit } from "../security.js";
 import { notifyPromptsChanged } from "../prompt-notifications.js";
+import { validateTriggerPhrases } from "../discovery-config.js";
 
 class VersionConflictError extends Error {
   constructor(public readonly slug: string, public readonly version: string) {
@@ -88,6 +89,7 @@ async function visiblePublishedSkills(user: SessionUser) {
       summary: skills.summary,
       category: skills.category,
       skillType: skills.skillType,
+      triggerPhrases: skills.triggerPhrases,
       status: skills.status,
       iconUrl: skills.iconUrl,
       updatedAt: skills.updatedAt,
@@ -343,6 +345,24 @@ app.get("/internal/:slug", requireInternalToken, async (c) => {
 app.get("/", requireAdmin, async (c) => c.json({
   data: await visiblePublishedSkills(c.get("user")),
 }));
+
+/** 触发词属于可即时调整的发现配置，不随 Skill 版本发布。 */
+app.put("/:slug/triggers", requireAdmin, validateTriggerPhrases, async (c) => {
+  const slug = c.req.param("slug");
+  const skill = await db.query.skills.findFirst({ where: eq(skills.slug, slug) });
+  if (!skill) return c.json({ error: `skill "${slug}" 不存在` }, 404);
+  if (skill.skillType !== "ordinary") {
+    return c.json({ error: "应用 Skill 的触发词由所属应用统一配置" }, 400);
+  }
+
+  const { triggerPhrases } = c.req.valid("json");
+  const [updated] = await db.update(skills)
+    .set({ triggerPhrases, updatedAt: new Date() })
+    .where(eq(skills.id, skill.id))
+    .returning({ triggerPhrases: skills.triggerPhrases });
+  if (!updated) return c.json({ error: "Skill 触发词更新失败" }, 500);
+  return c.json({ data: updated });
+});
 
 /** Console 埋点：身份只从会话派生。 */
 app.post("/:slug/events", requireAdmin, zValidator("json", eventSchema), async (c) =>

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import type { ElTree } from "element-plus";
+import { ElMessage, type ElTree } from "element-plus";
 import {
   ApiError,
   fetchSkillDetail,
   fetchSkillFile,
   reportEvent,
+  updateSkillTriggerPhrases,
   type SkillDetail,
 } from "../api";
 import { renderSafeMarkdown } from "../markdown";
@@ -16,7 +17,11 @@ const skill = ref<SkillDetail | null>(null);
 const bodyHtml = ref("");
 const loading = ref(true);
 const errorMessage = ref("");
+const triggerPhrases = ref<string[]>([]);
+const savedTriggerSignature = ref("[]");
+const savingTriggers = ref(false);
 let skillRequestId = 0;
+const triggerDirty = computed(() => JSON.stringify(triggerPhrases.value) !== savedTriggerSignature.value);
 
 // ---------- 技能包文件树 + 预览 ----------
 
@@ -223,6 +228,8 @@ async function loadSkill(): Promise<void> {
       : "";
     if (requestId !== skillRequestId) return;
     skill.value = detail;
+    triggerPhrases.value = [...detail.triggerPhrases];
+    savedTriggerSignature.value = JSON.stringify(detail.triggerPhrases);
     bodyHtml.value = renderedBody;
     // 默认选中 SKILL.md 预览
     void selectFile("SKILL.md");
@@ -240,6 +247,28 @@ async function loadSkill(): Promise<void> {
     }
   } finally {
     if (requestId === skillRequestId) loading.value = false;
+  }
+}
+
+async function saveTriggers(): Promise<void> {
+  if (savingTriggers.value) return;
+  const requestedSlug = props.slug;
+  const submitted = [...triggerPhrases.value];
+  savingTriggers.value = true;
+  try {
+    const saved = await updateSkillTriggerPhrases(requestedSlug, submitted);
+    if (props.slug !== requestedSlug) return;
+    // 回执只代表提交时的快照，保存期间的后续编辑仍是未保存草稿。
+    if (JSON.stringify(triggerPhrases.value) === JSON.stringify(submitted)) {
+      triggerPhrases.value = [...saved];
+    }
+    savedTriggerSignature.value = JSON.stringify(saved);
+    if (skill.value) skill.value.triggerPhrases = [...saved];
+    ElMessage.success(triggerDirty.value ? "本次触发词已保存，后续修改尚未保存" : "Skill 触发词已生效");
+  } catch (error) {
+    ElMessage.error((error as Error).message);
+  } finally {
+    savingTriggers.value = false;
   }
 }
 
@@ -276,8 +305,8 @@ watch(() => props.slug, loadSkill, { immediate: true });
     </div>
 
     <el-alert v-if="skill.skillType === 'ordinary'" type="warning" :closable="false" style="margin-bottom: 24px">
-      💡 在 WorkBuddy 的 / 菜单中选择「{{ skill.slug }}」即可使用本技能；
-      也可以在对话中说「用 {{ skill.name }} 帮我…」让 AI 自动调用。
+      💡 员工在 WorkBuddy 中直接描述任务后，企业 Skill 助手会优先按下方触发词匹配本 Skill；
+      也可以明确说「用 {{ skill.name }} 帮我…」。
     </el-alert>
     <el-alert v-else type="info" :closable="false" style="margin-bottom: 24px">
       此 Skill 不会被企业 Skill 助手检索；满足应用契约的版本可在对应应用中选择并激活。
@@ -289,6 +318,31 @@ watch(() => props.slug, loadSkill, { immediate: true });
     >
       最近更新：{{ skill.latestVersion.changelog }}
     </p>
+
+    <el-card v-if="skill.skillType === 'ordinary'" shadow="never" class="content-card trigger-card">
+      <template #header><strong>WorkBuddy 触发</strong></template>
+      <el-form label-position="top" class="form-column">
+        <el-form-item label="触发词">
+          <el-select
+            v-model="triggerPhrases"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            clearable
+            :multiple-limit="20"
+            style="width: 100%"
+            placeholder="输入短语后按回车，例如：整理周报"
+          />
+          <div class="field-help">
+            员工原话命中这些短语时，本 Skill 会优先于仅命中标签、简介或分类的结果。最多 20 个，每个不超过 64 个字符。
+          </div>
+        </el-form-item>
+        <el-button type="primary" :loading="savingTriggers" :disabled="!triggerDirty" @click="saveTriggers">
+          保存触发词
+        </el-button>
+      </el-form>
+    </el-card>
 
     <!-- 技能包文件：左侧目录树 + 右侧预览 -->
     <el-card style="margin-bottom: 24px">
@@ -355,6 +409,14 @@ watch(() => props.slug, loadSkill, { immediate: true });
 </template>
 
 <style scoped>
+.trigger-card {
+  margin-bottom: 24px;
+}
+.field-help {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-top: 6px;
+}
 .pkg-layout {
   display: flex;
   gap: 16px;

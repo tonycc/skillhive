@@ -106,14 +106,26 @@ describe("employee MCP tools", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
       const url = new URL(String(input));
       if (url.pathname === "/api/skills/internal") {
-        return new Response(JSON.stringify({ data: [{
-          slug: "weekly-report",
-          name: "周报助手",
-          summary: "整理团队周报",
-          category: "办公",
-          tags: ["汇报", "周报"],
-          skillType: "ordinary",
-        }] }), { status: 200 });
+        return new Response(JSON.stringify({ data: [
+          {
+            slug: "general-writing",
+            name: "通用写作",
+            summary: "可以帮我整理周报，也可以处理其他文档",
+            category: "办公",
+            tags: ["写作"],
+            triggerPhrases: [],
+            skillType: "ordinary",
+          },
+          {
+            slug: "weekly-report",
+            name: "周报助手",
+            summary: "整理团队周报",
+            category: "办公",
+            tags: ["汇报", "周报"],
+            triggerPhrases: ["整理周报", "生成团队周报"],
+            skillType: "ordinary",
+          },
+        ] }), { status: 200 });
       }
       if (url.pathname === "/api/internal/applications") {
         return new Response(JSON.stringify({ data: [{
@@ -121,7 +133,7 @@ describe("employee MCP tools", () => {
           name: "需求探索",
           summary: "梳理并提交业务需求",
           category: "产品",
-          keywords: ["需求", "业务改进"],
+          triggerPhrases: ["需求", "业务改进"],
           entryType: "application",
           applicationKey: "requirement-exploration",
           entryTool: "start_exploration",
@@ -137,11 +149,11 @@ describe("employee MCP tools", () => {
     try {
       const searchResult = await client.callTool({
         name: "search_skills",
-        arguments: { query: "汇报" },
+        arguments: { query: "帮我整理周报" },
       });
       const searchContent = searchResult.content as Array<{ type: string; text?: string }>;
       const matched = JSON.parse(searchContent[0]?.text ?? "[]") as Array<Record<string, unknown>>;
-      expect(matched).toHaveLength(1);
+      expect(matched).toHaveLength(2);
       expect(matched[0]).toMatchObject({
         slug: "weekly-report",
         entryType: "skill",
@@ -170,7 +182,7 @@ describe("employee MCP tools", () => {
       const listResult = await client.callTool({ name: "list_skills", arguments: {} });
       const listContent = listResult.content as Array<{ type: string; text?: string }>;
       const listed = JSON.parse(listContent[0]?.text ?? "[]") as Array<Record<string, unknown>>;
-      expect(listed).toHaveLength(1);
+      expect(listed).toHaveLength(2);
       expect(listed.some((item) => item.applicationKey === "requirement-exploration")).toBe(false);
     } finally {
       await Promise.all([client.close(), server.close()]);

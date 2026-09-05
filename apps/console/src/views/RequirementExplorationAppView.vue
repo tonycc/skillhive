@@ -6,6 +6,7 @@ import {
   fetchRequirementExplorationApplication,
   initializeRequirementExplorationSkill,
   updateExplorationPolicy,
+  updateRequirementExplorationTriggerPhrases,
   type ExplorationPolicyOption,
   type RequirementExplorationApplication,
 } from "../api";
@@ -14,11 +15,14 @@ const loading = ref(true);
 const loadError = ref("");
 const initializing = ref(false);
 const savingPolicy = ref(false);
+const savingTriggers = ref(false);
 const application = ref<RequirementExplorationApplication | null>(null);
 const options = ref<ExplorationPolicyOption[]>([]);
 const invalidPolicyBinding = ref(false);
 const advancedSettings = ref<string[]>([]);
 const savedPolicySignature = ref("");
+const triggerPhrases = ref<string[]>([]);
+const savedTriggerSignature = ref("[]");
 
 const policyForm = reactive({
   skillVersionId: "",
@@ -62,6 +66,7 @@ function policySignature(): string {
   );
 }
 const policyDirty = computed(() => savedPolicySignature.value !== policySignature());
+const triggerDirty = computed(() => JSON.stringify(triggerPhrases.value) !== savedTriggerSignature.value);
 const runSummary = computed(() => {
   if (!policyForm.enabled) {
     return policyDirty.value
@@ -81,6 +86,11 @@ const runSummary = computed(() => {
 
 function syncForms(detail: RequirementExplorationApplication, available: ExplorationPolicyOption[]): void {
   application.value = detail;
+  // 保存运行策略会重新加载页面数据；此时不能覆盖另一个独立表单中的未保存草稿。
+  if (!triggerDirty.value) {
+    triggerPhrases.value = [...detail.triggerPhrases];
+    savedTriggerSignature.value = JSON.stringify(detail.triggerPhrases);
+  }
   options.value = available;
   const policy = detail.policy;
   invalidPolicyBinding.value = Boolean(
@@ -100,6 +110,26 @@ function syncForms(detail: RequirementExplorationApplication, available: Explora
     policy?.blockedSkillVersionIds ?? [],
     policy?.enabled ?? false,
   );
+}
+
+async function saveTriggers(): Promise<void> {
+  if (savingTriggers.value) return;
+  const submitted = [...triggerPhrases.value];
+  savingTriggers.value = true;
+  try {
+    const saved = await updateRequirementExplorationTriggerPhrases(submitted);
+    // 回执只代表提交时的快照，保存期间的后续编辑仍是未保存草稿。
+    if (JSON.stringify(triggerPhrases.value) === JSON.stringify(submitted)) {
+      triggerPhrases.value = [...saved];
+    }
+    savedTriggerSignature.value = JSON.stringify(saved);
+    if (application.value) application.value.triggerPhrases = [...saved];
+    ElMessage.success(triggerDirty.value ? "本次触发词已保存，后续修改尚未保存" : "应用触发词已生效");
+  } catch (error) {
+    ElMessage.error((error as Error).message);
+  } finally {
+    savingTriggers.value = false;
+  }
 }
 
 function selectApplicationSkill(skillId: string): void {
@@ -201,6 +231,31 @@ onMounted(load);
     <el-skeleton v-if="loading" :rows="8" animated />
 
     <template v-else-if="application && !loadError">
+      <el-card shadow="never" class="content-card">
+        <template #header><strong>WorkBuddy 触发</strong></template>
+        <el-form label-position="top" class="form-column">
+          <el-form-item label="触发词">
+            <el-select
+              v-model="triggerPhrases"
+              multiple
+              filterable
+              allow-create
+              default-first-option
+              clearable
+              :multiple-limit="20"
+              style="width: 100%"
+              placeholder="输入短语后按回车，例如：需求探索"
+            />
+            <div class="field-help">
+              员工原话命中这些短语时会优先发现本应用；应用 Skill 本身不参与企业助手检索。最多 20 个，每个不超过 64 个字符。
+            </div>
+          </el-form-item>
+          <el-button type="primary" :loading="savingTriggers" :disabled="!triggerDirty" @click="saveTriggers">
+            保存触发词
+          </el-button>
+        </el-form>
+      </el-card>
+
       <el-card v-if="!hasApplicationSkills" shadow="never" class="content-card">
         <template #header><strong>需求探索应用 Skill</strong></template>
         <el-empty description="尚无可关联的应用 Skill">

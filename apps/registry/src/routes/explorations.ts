@@ -1065,16 +1065,25 @@ admin.put("/policy", zValidator("json", policySchema), async (c) => {
   ) {
     return c.json({ error: "只能激活已发布的应用 Skill 版本" }, 409);
   }
-  const candidateFiles = await db.select({
-    path: skillVersionFiles.path,
-    contentBase64: skillVersionFiles.contentBase64,
-  }).from(skillVersionFiles).where(eq(skillVersionFiles.versionId, version.id));
-  try {
-    validateRequirementExplorationApplicationSkill(parseSkillMd(version.content), candidateFiles);
-  } catch (error) {
-    return c.json({
-      error: `该应用 Skill 版本与需求探索不兼容：${(error as Error).message}`,
-    }, 409);
+  const currentPolicy = !input.enabled
+    ? await db.query.explorationPolicies.findFirst({ where: eq(explorationPolicies.key, "requirement-exploration") })
+    : null;
+  const pausingCurrentVersion = !input.enabled
+    && currentPolicy?.skillId === input.skillId
+    && currentPolicy.skillVersionId === input.skillVersionId;
+  // 暂停当前绑定必须始终可用；启用或换绑仍要校验所选版本的完整契约。
+  if (!pausingCurrentVersion) {
+    const candidateFiles = await db.select({
+      path: skillVersionFiles.path,
+      contentBase64: skillVersionFiles.contentBase64,
+    }).from(skillVersionFiles).where(eq(skillVersionFiles.versionId, version.id));
+    try {
+      validateRequirementExplorationApplicationSkill(parseSkillMd(version.content), candidateFiles);
+    } catch (error) {
+      return c.json({
+        error: `该应用 Skill 版本与需求探索不兼容：${(error as Error).message}`,
+      }, 409);
+    }
   }
   const blockedSkillVersionIds = [...new Set(input.blockedSkillVersionIds)];
   if (blockedSkillVersionIds.length > 0) {

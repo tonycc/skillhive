@@ -94,6 +94,8 @@ export const skills = pgTable(
     category: varchar("category", { length: 64 }).notNull().default("通用"),
     /** 用途分类与具体应用解耦；应用关系由各应用的运行策略维护。 */
     skillType: skillTypeEnum("skill_type").notNull().default("ordinary"),
+    /** 可即时调整的意图触发词；独立于不可变 Skill 版本。应用 Skill 不使用此字段。 */
+    triggerPhrases: jsonb("trigger_phrases").$type<string[]>().notNull().default([]),
     status: skillStatusEnum("status").notNull().default("draft"),
     /** 图标 URL（来自 frontmatter icon 字段），供客户端展示 */
     iconUrl: varchar("icon_url", { length: 1024 }),
@@ -231,6 +233,17 @@ export const explorationPolicies = pgTable("exploration_policies", {
   blockedSkillVersionIds: jsonb("blocked_skill_version_ids").$type<string[]>().notNull().default([]),
   updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** 内置应用的发现配置；应用运行规则与触发词分别维护。 */
+export const applicationDiscoveryConfigs = pgTable("application_discovery_configs", {
+  applicationKey: varchar("application_key", { length: 64 }).primaryKey(),
+  triggerPhrases: jsonb("trigger_phrases").$type<string[]>().notNull().default([]),
+  updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
 });
 
 // ---------- 需求探索、正式提交与审核 ----------

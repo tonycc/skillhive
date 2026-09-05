@@ -26,6 +26,7 @@ export interface SkillListItem {
   summary: string;
   category?: string;
   tags?: string[];
+  triggerPhrases?: string[];
   skillType?: "ordinary" | "application";
   status?: string;
   iconUrl?: string | null;
@@ -37,7 +38,9 @@ export interface ApplicationListItem {
   name: string;
   summary: string;
   category: string;
-  keywords: string[];
+  triggerPhrases?: string[];
+  /** 兼容滚动发布期间的旧 Registry 响应。 */
+  keywords?: string[];
   entryType: "application";
   applicationKey: string;
   entryTool: string;

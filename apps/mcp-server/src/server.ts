@@ -152,13 +152,68 @@ function discoveryItem(skill: Awaited<ReturnType<typeof fetchVisibleSkills>>[num
   };
 }
 
-function matchesQuery(
-  item: { name: string; summary: string; category?: string; tags?: string[]; keywords?: string[] },
-  normalized: string,
-): boolean {
-  return `${item.name}\n${item.summary}\n${item.category ?? ""}\n${item.tags?.join("\n") ?? ""}\n${item.keywords?.join("\n") ?? ""}`
-    .toLocaleLowerCase()
-    .includes(normalized);
+type SearchableCapability = {
+  name: string;
+  slug?: string;
+  summary: string;
+  category?: string;
+  tags?: string[];
+  triggerPhrases?: string[];
+  keywords?: string[];
+};
+
+function normalizedMatchScore(value: string, query: string, scores: {
+  exact: number;
+  queryContainsValue: number;
+  valueContainsQuery: number;
+}): number {
+  const normalizedValue = value.trim().toLocaleLowerCase();
+  if (!normalizedValue) return 0;
+  if (normalizedValue === query) return scores.exact;
+  if (query.includes(normalizedValue)) return scores.queryContainsValue;
+  if (normalizedValue.includes(query)) return scores.valueContainsQuery;
+  return 0;
+}
+
+/** 名称和显式触发词优先，其次是版本标签，最后才用简介与分类兜底。 */
+function capabilityMatchScore(item: SearchableCapability, query: string): number {
+  const nameScore = Math.max(
+    normalizedMatchScore(item.name, query, { exact: 120, queryContainsValue: 108, valueContainsQuery: 104 }),
+    item.slug
+      ? normalizedMatchScore(item.slug, query, { exact: 116, queryContainsValue: 106, valueContainsQuery: 102 })
+      : 0,
+  );
+  const triggerPhrases = item.triggerPhrases ?? item.keywords ?? [];
+  const triggerScore = Math.max(0, ...triggerPhrases.map((phrase) => normalizedMatchScore(
+    phrase,
+    query,
+    { exact: 118, queryContainsValue: 110, valueContainsQuery: 100 },
+  )));
+  const tagScore = Math.max(0, ...(item.tags ?? []).map((tag) => normalizedMatchScore(
+    tag,
+    query,
+    { exact: 90, queryContainsValue: 84, valueContainsQuery: 80 },
+  )));
+  const summaryScore = normalizedMatchScore(item.summary, query, {
+    exact: 70,
+    queryContainsValue: 64,
+    valueContainsQuery: 60,
+  });
+  const categoryScore = normalizedMatchScore(item.category ?? "", query, {
+    exact: 50,
+    queryContainsValue: 44,
+    valueContainsQuery: 40,
+  });
+  return Math.max(nameScore, triggerScore, tagScore, summaryScore, categoryScore);
+}
+
+function rankCapabilities<T extends SearchableCapability>(items: T[], query: string): T[] {
+  const normalized = query.trim().toLocaleLowerCase();
+  return items
+    .map((item, index) => ({ item, index, score: capabilityMatchScore(item, normalized) }))
+    .filter(({ score }) => score > 0)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map(({ item }) => item);
 }
 
 async function capabilityItems(identity: CallerIdentity) {
@@ -237,12 +292,11 @@ export async function createServer(identity: CallerIdentity): Promise<SkillHiveS
 
   server.tool(
     "search_capabilities",
-    "按关键词统一搜索当前员工可使用的普通 Skill 和应用；应用内部 Skill 不会出现在结果中",
-    { query: z.string().trim().min(1).max(128).describe("任务关键词，如：周报、翻译、需求探索") },
+    "优先用员工原始任务搜索其可使用的普通 Skill 和应用；按名称、触发词、标签和简介排序，不返回应用内部 Skill",
+    { query: z.string().trim().min(1).max(128).describe("员工的原始任务或关键词，如：帮我整理本周团队周报") },
     async ({ query }) => {
       try {
-        const normalized = query.toLocaleLowerCase();
-        return jsonToolResult((await capabilityItems(identity)).filter((item) => matchesQuery(item, normalized)));
+        return jsonToolResult(rankCapabilities(await capabilityItems(identity), query));
       } catch (error) {
         return toolError(error, "企业能力列表");
       }
@@ -263,8 +317,7 @@ export async function createServer(identity: CallerIdentity): Promise<SkillHiveS
     { query: z.string().trim().min(1).max(128).describe("搜索关键词，如：周报、邮件、翻译") },
     async ({ query }) => {
       try {
-        const normalized = query.toLocaleLowerCase();
-        const matched = (await fetchVisibleSkills(identity)).filter((skill) => matchesQuery(skill, normalized));
+        const matched = rankCapabilities(await fetchVisibleSkills(identity), query);
         return jsonToolResult(matched.map(discoveryItem));
       } catch (error) {
         return toolError(error, "技能列表");

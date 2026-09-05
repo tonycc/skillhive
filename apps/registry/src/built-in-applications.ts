@@ -13,6 +13,7 @@ export const requirementExplorationApplication = {
   key: REQUIREMENT_EXPLORATION_APP_KEY,
   name: "需求探索",
   description: "引导员工澄清业务问题，将阶段性草稿和正式需求归集到公司服务器。",
+  defaultTriggerPhrases: ["需求", "需求探索", "业务问题", "业务改进", "需求提交", "评审反馈"],
   type: "built_in" as const,
 };
 
@@ -104,6 +105,14 @@ function validateGrillingProtocol(contentBase64: string): void {
   } catch {
     throw new Error("需求探索应用 Skill 的 grilling-protocol.json 不是有效 JSON");
   }
+  if (!protocol || typeof protocol !== "object" || Array.isArray(protocol)) {
+    throw new Error("需求探索应用 Skill 的 Grill Me 访谈协议不完整");
+  }
+  // 历史协议未强制声明版本；缺省仍按 1.0 的文本问答契约验证。
+  const protocolVersion = protocol.version ?? "1.0";
+  if (protocolVersion !== "1.0" && protocolVersion !== "1.1") {
+    throw new Error("需求探索应用 Skill 的 Grill Me 访谈协议版本不受支持");
+  }
   const questionFormat = protocol.questionFormat as Record<string, unknown> | undefined;
   if (
     protocol.protocol !== "grill-me"
@@ -118,6 +127,22 @@ function validateGrillingProtocol(contentBase64: string): void {
     || protocol.requiresSharedUnderstandingConfirmation !== true
     || protocol.requiresSeparateSubmissionConfirmation !== true
     || protocol.prohibitActionBeforeConfirmation !== true
+  ) {
+    throw new Error("需求探索应用 Skill 的 Grill Me 访谈协议不完整");
+  }
+  // 原生问答是 1.1 的新增约束，不能追溯应用到已发布的 1.0 快照。
+  if (protocolVersion === "1.0") return;
+  const nativeRequestTypes = questionFormat.nativeRequestTypes;
+  if (
+    questionFormat.interactionPreference !== "workbuddy-native-question"
+    || !Array.isArray(nativeRequestTypes)
+    || !nativeRequestTypes.includes("AskUserQuestion")
+    || !nativeRequestTypes.includes("AskQuestion")
+    || questionFormat.singleSelectForMutuallyExclusiveOptions !== true
+    || questionFormat.multiSelectForIndependentOptions !== true
+    || questionFormat.freeTextForOpenEndedFacts !== true
+    || questionFormat.preserveCompleteFrontier !== true
+    || questionFormat.fallback !== "numbered-text"
   ) {
     throw new Error("需求探索应用 Skill 的 Grill Me 访谈协议不完整");
   }

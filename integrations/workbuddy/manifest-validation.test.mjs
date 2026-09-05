@@ -55,6 +55,7 @@ user-invocable: true
 \`get_connector_status\` \`start_exploration\` \`list_my_explorations\` \`get_exploration\` \`save_exploration\` \`submit_exploration\` \`abandon_exploration\` \`get_skill_file\`
 Use explorationId, activeRevision and activeContent.
 讨论阶段服从锁定的应用 Skill；每轮询问当前 frontier，不设置固定问题数量，并在回答后重新计算 frontier。
+优先使用 AskUserQuestion / AskQuestion；互斥答案用单选，可同时成立的答案用多选；不可用时降级为同一消息内的编号文本问答。
 `;
 
 const enterpriseSkillAssistant = `---
@@ -123,6 +124,11 @@ describe("WorkBuddy connector manifest validation", () => {
   it("rejects an entry Skill that weakens the Grill Me frontier protocol", () => {
     expect(() => validateEntrySkill(skill.replace("不设置固定问题数量", "每轮只问两个问题")))
       .toThrow(/完整 Grill Me frontier 协议/);
+  });
+
+  it("rejects an entry Skill without the native question interaction preference", () => {
+    expect(() => validateEntrySkill(skill.replace("优先使用 AskUserQuestion / AskQuestion；", "")))
+      .toThrow(/原生问答弹窗/);
   });
 
   it("rejects an enterprise Skill assistant without application routing boundaries", () => {

@@ -19,7 +19,7 @@ pnpm connector:verify
 pnpm connector:validate
 ```
 
-校验覆盖官方提交前检查中可由仓库自动证明的部分：市场元数据与双语示例、语义化版本、单一 Streamable HTTP Server、Token 密码字段、企业 Skill 助手与需求探索入口的必填字段和核心工具契约、入口服从锁定 Grill Me frontier 且不限制每轮问题数量，以及包内秘密/本机地址扫描。`source` 的全局唯一性、平台审核和真实客户端兼容性必须在 WorkBuddy 开放平台及目标设备另行验证。
+校验覆盖官方提交前检查中可由仓库自动证明的部分：市场元数据与双语示例、语义化版本、单一 Streamable HTTP Server、Token 密码字段、企业 Skill 助手与需求探索入口的必填字段和核心工具契约、入口服从锁定 Grill Me frontier 且不限制每轮问题数量、优先使用 WorkBuddy 原生问答弹窗并声明单选/多选及文本降级，以及包内秘密/本机地址扫描。`source` 的全局唯一性、平台审核和真实客户端兼容性必须在 WorkBuddy 开放平台及目标设备另行验证。
 
 `integrations/workbuddy/dist/` 是可重复生成的本地审核产物，不属于源码。执行清理后需要提交审核包时，重新运行上面的 `connector:build` 和 `connector:verify` 即可。
 

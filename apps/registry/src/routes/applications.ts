@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import {
+  applicationDiscoveryConfigs,
   db,
   explorationAuditEvents,
   explorationPolicies,
@@ -16,6 +17,7 @@ import {
   requirementExplorationApplication,
 } from "../built-in-applications.js";
 import { notifyPromptsChanged } from "../prompt-notifications.js";
+import { validateTriggerPhrases } from "../discovery-config.js";
 
 type AppEnv = { Variables: { user: SessionUser } };
 const app = new Hono<AppEnv>();
@@ -29,14 +31,29 @@ function decodedBase64Size(value: string): number {
 }
 
 async function requirementExplorationDetail() {
-  const policy = await db.query.explorationPolicies.findFirst({
-    where: eq(explorationPolicies.key, REQUIREMENT_EXPLORATION_APP_KEY),
-  });
+  const [policy, discoveryConfig] = await Promise.all([
+    db.query.explorationPolicies.findFirst({
+      where: eq(explorationPolicies.key, REQUIREMENT_EXPLORATION_APP_KEY),
+    }),
+    db.query.applicationDiscoveryConfigs.findFirst({
+      where: eq(applicationDiscoveryConfigs.applicationKey, REQUIREMENT_EXPLORATION_APP_KEY),
+    }),
+  ]);
+  const triggerPhrases = discoveryConfig?.triggerPhrases
+    ?? requirementExplorationApplication.defaultTriggerPhrases;
   const applicationSkills = await db.select().from(skills)
     .where(eq(skills.skillType, "application"))
     .orderBy(desc(skills.updatedAt));
   const skill = applicationSkills.find((item) => item.id === policy?.skillId) ?? applicationSkills[0];
-  if (!skill) return { ...requirementExplorationApplication, initialized: false, skill: null, policy: policy ?? null };
+  if (!skill) {
+    return {
+      ...requirementExplorationApplication,
+      triggerPhrases,
+      initialized: false,
+      skill: null,
+      policy: policy ?? null,
+    };
+  }
 
   const versions = await db.select({
     id: skillVersions.id,
@@ -74,6 +91,7 @@ async function requirementExplorationDetail() {
   }
   return {
     ...requirementExplorationApplication,
+    triggerPhrases,
     initialized: true,
     skill: {
       id: skill.id,
@@ -105,6 +123,32 @@ app.get("/", async (c) => {
 
 app.get(`/${REQUIREMENT_EXPLORATION_APP_KEY}`, async (c) =>
   c.json({ data: await requirementExplorationDetail() }));
+
+app.put(
+  `/${REQUIREMENT_EXPLORATION_APP_KEY}/triggers`,
+  validateTriggerPhrases,
+  async (c) => {
+    const actor = c.get("user");
+    const { triggerPhrases } = c.req.valid("json");
+    await db.transaction(async (tx) => {
+      await tx.insert(applicationDiscoveryConfigs).values({
+        applicationKey: REQUIREMENT_EXPLORATION_APP_KEY,
+        triggerPhrases,
+        updatedBy: actor.id,
+      }).onConflictDoUpdate({
+        target: applicationDiscoveryConfigs.applicationKey,
+        set: { triggerPhrases, updatedBy: actor.id, updatedAt: new Date() },
+      });
+      await tx.insert(explorationAuditEvents).values({
+        actorType: "admin",
+        actorId: actor.id,
+        action: "application.triggers_updated",
+        metadata: { applicationKey: REQUIREMENT_EXPLORATION_APP_KEY, triggerPhrases },
+      });
+    });
+    return c.json({ data: { triggerPhrases } });
+  },
+);
 
 app.post(`/${REQUIREMENT_EXPLORATION_APP_KEY}/initialize`, async (c) => {
   const actor = c.get("user");

@@ -7,7 +7,7 @@
   "description_en": "For authorized employees: find company skills and explore or submit business requirements. A company-issued SkillHive token is required.",
   "source": "skillhive",
   "type": "mcp",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "minWorkbuddyVersion": "4.24.0",
   "auth_mode": "token",
   "examples_zh": ["帮我找一个整理周报的公司 Skill", "列出我可以使用的企业 Skill", "帮我探索一个业务需求", "继续我上次的需求讨论"],

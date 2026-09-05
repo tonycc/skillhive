@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import {
+  applicationDiscoveryConfigs,
   db,
   explorationPolicies,
   skillDepartmentVisibility,
@@ -54,6 +55,10 @@ app.get("/", async (c) => {
   )).limit(1);
   if (!active[0]) return c.json({ data: [] });
 
+  const discoveryConfig = await db.query.applicationDiscoveryConfigs.findFirst({
+    where: eq(applicationDiscoveryConfigs.applicationKey, REQUIREMENT_EXPLORATION_APP_KEY),
+  });
+
   const visibility = await db.select({ departmentId: skillDepartmentVisibility.departmentId })
     .from(skillDepartmentVisibility)
     .where(eq(skillDepartmentVisibility.skillId, active[0].skillId));
@@ -63,12 +68,17 @@ app.get("/", async (c) => {
       || !visibility.some((item) => item.departmentId === employee.departmentId))
   ) return c.json({ data: [] });
 
+  const triggerPhrases = discoveryConfig?.triggerPhrases
+    ?? requirementExplorationApplication.defaultTriggerPhrases;
+
   return c.json({ data: [{
     key: requirementExplorationApplication.key,
     name: requirementExplorationApplication.name,
     summary: requirementExplorationApplication.description,
     category: "产品",
-    keywords: ["需求", "需求探索", "业务问题", "业务改进", "需求提交", "评审反馈"],
+    triggerPhrases,
+    /** 兼容尚未升级、仍读取 keywords 的 MCP Server。 */
+    keywords: triggerPhrases,
     entryType: "application",
     applicationKey: requirementExplorationApplication.key,
     entryTool: "start_exploration",
