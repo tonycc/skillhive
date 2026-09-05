@@ -1037,7 +1037,7 @@ admin.get("/connector", (c) => {
     ...readiness,
     configurationIssues: [
       ...(!mcpUrl.valid ? ["尚未配置合法的非示例 HTTPS /mcp 企业地址"] : []),
-      ...(process.env.WORKBUDDY_CONNECTOR_MARKET_URL?.trim() && !marketUrl.valid ? ["正式市场入口不是合法 HTTPS 地址"] : []),
+      ...(process.env.WORKBUDDY_CONNECTOR_MARKET_URL?.trim() && !marketUrl.valid ? ["公开市场入口不是合法 HTTPS 地址"] : []),
       ...(verifiedAtRaw && !verifiedAt ? ["实测时间格式无效"] : []),
     ],
   } });

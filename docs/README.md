@@ -1,10 +1,10 @@
 # SkillHive 文档索引
 
-本文档目录区分产品基线、操作手册和证据记录。仓库验证通过不等于生产部署、WorkBuddy 平台审核或全员发布完成。
+本文档目录区分产品基线、操作手册和证据记录。仓库验证通过不等于生产部署、WorkBuddy 平台审核、公开上架或目标企业全员推广完成。
 
 ## 产品基线
 
-- [WorkBuddy 官方连接器与需求探索产品方案](product/workbuddy-connector-requirement-exploration.md)：当前产品边界、应用与 Skill 模型、Grill Me 流程、身份、数据和验收定义。
+- [SkillHive 公开市场连接器与需求探索产品方案](product/workbuddy-connector-requirement-exploration.md)：当前产品边界、应用与 Skill 模型、Grill Me 流程、身份、数据和验收定义。连接器由个人开发者主体提交并在市场公开可见；安装不授予企业数据权限，只有持企业管理员签发的有效员工令牌才能访问对应企业数据。
 
 ## 操作与证据
 

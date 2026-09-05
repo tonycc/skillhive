@@ -8,6 +8,7 @@ import {
   validateEnterpriseSkillAssistant,
   validateEntrySkill,
   validateMcpTemplate,
+  validatePublicMarketplaceAccessCopy,
   validateTokenSchema,
 } from "./manifest-validation.mjs";
 
@@ -50,6 +51,7 @@ const token = await json("token-schema.json");
 validateConnectorMeta(meta);
 validateMcpTemplate(mcp);
 validateTokenSchema(token);
+validatePublicMarketplaceAccessCopy(meta, token);
 await access(join(source, "icon.svg"));
 const skill = await readFile(join(source, "skills", "requirement-exploration", "SKILL.md"), "utf8");
 validateEntrySkill(skill);

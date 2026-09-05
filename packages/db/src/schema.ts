@@ -174,7 +174,7 @@ export const userTokens = pgTable(
   (t) => [index("user_tokens_user_idx").on(t.userId)],
 );
 
-// ---------- WorkBuddy 官方连接器身份 ----------
+// ---------- WorkBuddy 连接器员工身份 ----------
 
 /**
  * 员工档案与 Console 用户彻底分离：员工只在 WorkBuddy 中使用连接器，不能登录管理端。

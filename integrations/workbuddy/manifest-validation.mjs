@@ -99,6 +99,18 @@ export function validateTokenSchema(token) {
   }
 }
 
+export function validatePublicMarketplaceAccessCopy(meta, token) {
+  const descriptionZh = String(meta?.description_zh ?? "");
+  const descriptionEn = `${meta?.description ?? ""} ${meta?.description_en ?? ""}`.toLowerCase();
+  const tokenDescription = String(token?.description ?? "");
+  if (!descriptionZh.includes("员工令牌") || !descriptionEn.includes("token")) {
+    fail("公开市场描述必须用中英文说明需要企业签发的员工令牌");
+  }
+  if (!tokenDescription.includes("公开市场") || !tokenDescription.includes("企业数据")) {
+    fail("令牌表单必须说明公开安装不等于企业数据授权");
+  }
+}
+
 export function parseSkillFrontmatter(skill) {
   const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(skill);
   if (!match) fail("入口 SKILL.md 缺少 YAML frontmatter");

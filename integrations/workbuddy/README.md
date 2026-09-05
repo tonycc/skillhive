@@ -1,6 +1,8 @@
-# WorkBuddy 官方连接器构建
+# SkillHive 公开市场连接器构建
 
 `skillhive/` 是可审计的连接器源文件，包含统一发现普通 Skill 和应用的“企业 Skill 助手”，以及兼容既有使用方式的“需求探索”显式快捷入口。真实企业 MCP 地址不得提交到仓库；发布前由 IT 在隔离的构建环境中生成最终目录：
+
+该包计划由个人实名认证开发者提交到 WorkBuddy 公开市场，建议服务类目为“商业服务—企业管理”。市场中的所有用户可以查看和安装连接器，但安装不会授予企业数据权限；只有持目标企业管理员签发的有效 SkillHive 员工令牌，才能访问该企业的 Skill、应用和需求数据。公司普通 Skill、业务规则、员工令牌及其他凭据均不进入公开包。
 
 ```bash
 pnpm connector:build -- "$WORKBUDDY_CONNECTOR_MCP_URL"
@@ -21,4 +23,4 @@ pnpm connector:validate
 
 `integrations/workbuddy/dist/` 是可重复生成的本地审核产物，不属于源码。执行清理后需要提交审核包时，重新运行上面的 `connector:build` 和 `connector:verify` 即可。
 
-官方连接器规范：https://open.workbuddy.cn/docs/connector
+WorkBuddy 官方连接器规范：https://open.workbuddy.cn/docs/connector

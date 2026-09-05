@@ -34,12 +34,12 @@ SkillHive 提供"集中发布 + 统一分发 + 数据反馈"的完整闭环：
 | `apps/cli` | `skillhive` 命令行工具，IT 发布 Skill 使用 |
 | `packages/db` | Drizzle schema 与数据库客户端 |
 | `packages/skill-schema` | SKILL.md 格式的解析与校验（Zod） |
-| `integrations/workbuddy` | WorkBuddy 官方连接器源文件、企业 Skill 助手、应用快捷入口和安全构建脚本 |
+| `integrations/workbuddy` | SkillHive 公开市场第三方连接器源文件、企业 Skill 助手、应用快捷入口和安全构建脚本 |
 
 ## 产品方案
 
 - [文档索引](docs/README.md)：产品基线、运行手册、验收证据和维护边界。
-- [WorkBuddy 官方连接器与需求探索产品方案](docs/product/workbuddy-connector-requirement-exploration.md)：WorkBuddy 员工入口、管理员专用 Web、MCP + Skill 接入及需求结果归集设计。
+- [SkillHive 公开市场连接器与需求探索产品方案](docs/product/workbuddy-connector-requirement-exploration.md)：WorkBuddy 员工入口、管理员专用 Web、MCP + Skill 接入及需求结果归集设计。
 - [WorkBuddy 需求探索上线与回退手册](docs/operations/workbuddy-requirement-exploration-runbook.md)：部署、规则激活、员工发放、验证、清理和故障回退步骤。
 - [MVP 验收追踪表](docs/operations/workbuddy-requirement-exploration-acceptance.md)：A01—A20 的仓库证据、外部证据与剩余门槛。
 - [连接器提交与实测记录](docs/operations/workbuddy-connector-submission-record.md)：每个正式连接器版本需要单独填写的构建、平台审核和真实客户端证据模板。
@@ -68,7 +68,7 @@ pnpm dev
 | 管理员运营平台 | http://localhost:3000 |
 | 数据看板 | http://localhost:3000/stats |
 | Registry API | http://localhost:3001/health |
-| MCP Server（官方连接器使用 /mcp） | http://localhost:3100/health |
+| MCP Server（公开市场连接器使用 /mcp） | http://localhost:3100/health |
 
 也可以按需单独启动：`pnpm dev:registry` / `pnpm dev:mcp` / `pnpm dev:console`。
 
@@ -94,7 +94,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 低复杂度或复用密钥。端口只绑定 `127.0.0.1`，由服务器前的企业 HTTPS 反向代理对外提供服务；
 当前方案不允许把对应的 `*_BIND_ADDRESS` 改为局域网地址或 `0.0.0.0`。Console 会在同域代理
 `/sse`、`/messages` 与 `/mcp`，因此默认 `PUBLIC_MCP_URL=/sse` 不会降级为明文跨域连接。
-`PUBLIC_MCP_URL` 仍用于兼容 SSE 客户端且只接受根路径 `/sse`；官方连接器独立使用同域
+`PUBLIC_MCP_URL` 仍用于兼容 SSE 客户端且只接受根路径 `/sse`；公开市场连接器独立使用同域
 `/mcp` Streamable HTTP 入口。带路径前缀、查询参数或片段的 SSE 地址会在 MCP 启动时被拒绝，
 避免生成无法投递 `/messages` 的半可用配置。
 MCP 在生产模式会拒绝非 HTTPS 的外部请求；只有明确评估过受控明文网络后才可设置
@@ -108,7 +108,7 @@ Registry 或 MCP 的容器端口直接暴露到不受信网络。
 |---|---|---|
 | Console | https://你的企业域名 | 管理员运营入口（nginx 托管 + /api 反代） |
 | Registry | https://你的企业域名/api | CLI publish 入口（也可经独立受控域名） |
-| MCP Server | https://你的企业域名/mcp | WorkBuddy 官方连接器入口（员工专属 Bearer 鉴权） |
+| MCP Server | https://你的企业域名/mcp | SkillHive 公开市场连接器入口（员工专属 Bearer 鉴权） |
 
 registry 首次启动会自动执行数据库迁移；在 `.env` 中设置 `SKILLHIVE_ADMIN_EMAIL` / `SKILLHIVE_ADMIN_PASSWORD` 可引导创建管理员账号（验证后建议移除）。
 
@@ -128,7 +128,7 @@ registry 首次启动会自动执行数据库迁移；在 `.env` 中设置 `SKIL
 可直接启动的生产构建。数据库运行时可用
 `pnpm smoke:workbuddy` 验证管理员、员工令牌、草稿、隔离、幂等、提交和评审闭环；`pnpm load:workbuddy`
 通过真实 Streamable HTTP `/mcp` 地址执行读/写并发性能验收。真实企业 HTTPS 地址确认后，按
-[连接器构建说明](integrations/workbuddy/README.md) 生成待审核目录。部署前使用 `pnpm validate:production -- --env-file .env --phase deploy` 校验核心密钥、传输安全、监听边界和显式保留期；该阶段允许 WorkBuddy 保持 `unconfigured`。全员发布前改用 `--phase launch`，再校验正式企业信息、连接器地址、平台审核和客户端证据。CI 还会检查生产依赖高危漏洞与 Compose 配置。
+[连接器构建说明](integrations/workbuddy/README.md) 生成待审核目录。部署前使用 `pnpm validate:production -- --env-file .env --phase deploy` 校验核心密钥、传输安全、监听边界和显式保留期；该阶段允许 WorkBuddy 保持 `unconfigured`。向目标企业全员推广前改用 `--phase launch`，再校验正式企业信息、连接器地址、平台审核和客户端证据。CI 还会检查生产依赖高危漏洞与 Compose 配置。
 
 ## 许可证
 

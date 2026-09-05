@@ -46,14 +46,14 @@ function formatTime(value: string | null): string {
   <main class="page-shell">
     <section class="page-heading">
       <div>
-        <p>查看官方连接器的企业地址、构建、联调和平台发布状态。需求探索规则请在“应用”中管理。</p>
+        <p>查看公开市场第三方连接器的企业地址、构建、联调和平台发布状态。市场公开可见不代表已获企业数据访问权限；需求探索规则请在“应用”中管理。</p>
       </div>
     </section>
     <el-alert v-if="loadError" :title="loadError" type="error" show-icon :closable="false">
       <template #default><el-button link type="primary" @click="load">重试</el-button></template>
     </el-alert>
     <el-card v-loading="loading" shadow="never" class="content-card">
-      <template #header><strong>WorkBuddy 官方连接器</strong></template>
+      <template #header><strong>SkillHive 公开市场连接器</strong></template>
       <template v-if="connector">
         <el-alert
           v-if="connector.configurationIssues.length"
@@ -65,7 +65,7 @@ function formatTime(value: string | null): string {
         />
         <el-alert
           v-if="connector.launchIssues.length"
-          title="尚未达到全员发布条件"
+          title="尚未达到目标企业全员推广条件"
           :description="connector.launchIssues.join('；')"
           type="info"
           show-icon
@@ -80,7 +80,7 @@ function formatTime(value: string | null): string {
           <el-descriptions-item label="最低 WorkBuddy 版本">{{ connector.minClientVersion }}</el-descriptions-item>
           <el-descriptions-item label="服务端协议">{{ connector.protocolVersion }}</el-descriptions-item>
           <el-descriptions-item label="平台审核状态">{{ reviewStatusLabel(connector.reviewStatus) }}</el-descriptions-item>
-          <el-descriptions-item label="正式市场入口">
+          <el-descriptions-item label="公开市场入口">
             <a v-if="connector.marketUrl" :href="connector.marketUrl" target="_blank" rel="noopener noreferrer">打开入口</a>
             <span v-else>待审核通过</span>
           </el-descriptions-item>
@@ -97,7 +97,7 @@ function formatTime(value: string | null): string {
               {{ connector.readyForClientTest ? '可以开始联调' : '配置未就绪' }}
             </el-tag>
           </el-descriptions-item>
-          <el-descriptions-item label="全员发布条件">
+          <el-descriptions-item label="目标企业全员推广条件">
             <el-tag :type="connector.readyForLaunch ? 'success' : 'warning'">
               {{ connector.readyForLaunch ? '仓库侧证据已齐' : `仍缺 ${connector.launchIssues.length} 项` }}
             </el-tag>

@@ -109,7 +109,7 @@ export function validateProductionEnv(env, { phase = "deploy", connectorMeta }) 
       if (env[name] !== expected) issues.push(`${name} 必须与连接器源文件一致：${expected}`);
     }
     if (env.WORKBUDDY_CONNECTOR_REVIEW_STATUS !== "approved") {
-      issues.push("全员发布前 WORKBUDDY_CONNECTOR_REVIEW_STATUS 必须是 approved");
+      issues.push("目标企业全员推广前 WORKBUDDY_CONNECTOR_REVIEW_STATUS 必须是 approved");
     }
     const marketUrl = requireText(env, "WORKBUDDY_CONNECTOR_MARKET_URL", issues);
     if (marketUrl) validateHttpsUrl(marketUrl, "WORKBUDDY_CONNECTOR_MARKET_URL", issues);
@@ -164,7 +164,7 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  console.log(`生产配置校验通过：${options.phase === "launch" ? "全员发布" : "部署联调"}阶段`);
+  console.log(`生产配置校验通过：${options.phase === "launch" ? "目标企业全员推广" : "部署联调"}阶段`);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {

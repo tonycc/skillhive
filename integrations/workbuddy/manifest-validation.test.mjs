@@ -6,15 +6,16 @@ import {
   validateEnterpriseSkillAssistant,
   validateEntrySkill,
   validateMcpTemplate,
+  validatePublicMarketplaceAccessCopy,
   validateTokenSchema,
 } from "./manifest-validation.mjs";
 
 const meta = {
   name: "SkillHive",
   name_en: "SkillHive",
-  description: "Explore requirements.",
-  description_zh: "探索需求。",
-  description_en: "Explore requirements.",
+  description: "Authorized employees need a company-issued token to explore requirements.",
+  description_zh: "授权员工须使用企业签发的员工令牌探索需求。",
+  description_en: "Authorized employees need a company-issued token to explore requirements.",
   source: "skillhive",
   type: "mcp",
   version: "1.0.0",
@@ -37,7 +38,7 @@ const mcp = {
 
 const token = {
   title: "连接 SkillHive",
-  description: "填写员工令牌",
+  description: "连接器可从公开市场安装，持有效员工令牌才能访问企业数据。",
   fields: [{ key: "SKILLHIVE_PAT", label: "员工令牌", type: "password", required: true }],
 };
 
@@ -76,6 +77,7 @@ describe("WorkBuddy connector manifest validation", () => {
     expect(() => validateConnectorMeta(meta)).not.toThrow();
     expect(() => validateMcpTemplate(mcp)).not.toThrow();
     expect(() => validateTokenSchema(token)).not.toThrow();
+    expect(() => validatePublicMarketplaceAccessCopy(meta, token)).not.toThrow();
     expect(() => validateEntrySkill(skill)).not.toThrow();
     expect(() => validateEnterpriseSkillAssistant(enterpriseSkillAssistant)).not.toThrow();
   });
@@ -103,6 +105,15 @@ describe("WorkBuddy connector manifest validation", () => {
   it("rejects a visible token field or extra credential inputs", () => {
     expect(() => validateTokenSchema({ ...token, fields: [{ ...token.fields[0], type: "text" }] })).toThrow(/密码型/);
     expect(() => validateTokenSchema({ ...token, fields: [...token.fields, token.fields[0]] })).toThrow(/只能包含/);
+  });
+
+  it("rejects marketplace copy that omits the employee authorization boundary", () => {
+    expect(() => validatePublicMarketplaceAccessCopy(
+      { ...meta, description_zh: "任何用户均可使用。", description: "Available to everyone.", description_en: "Available to everyone." },
+      token,
+    )).toThrow(/员工令牌/);
+    expect(() => validatePublicMarketplaceAccessCopy(meta, { ...token, description: "填写员工令牌" }))
+      .toThrow(/公开安装/);
   });
 
   it("rejects a Skill without the stable contract reference", () => {

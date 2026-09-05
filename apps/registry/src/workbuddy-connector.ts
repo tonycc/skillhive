@@ -53,7 +53,7 @@ export function workBuddyConnectorReadiness(input: WorkBuddyReadinessInput) {
     ...packageIssues,
     ...(input.environment !== "production" ? ["部署环境尚未标记为生产"] : []),
     ...(input.reviewStatus !== "approved" ? ["WorkBuddy 平台审核尚未通过"] : []),
-    ...(!input.marketUrlValid ? ["尚未登记有效的正式市场入口"] : []),
+    ...(!input.marketUrlValid ? ["尚未登记有效的公开市场入口"] : []),
     ...(!input.verifiedClientVersion ? ["尚未登记真实实测客户端版本"] : []),
     ...(!input.verifiedOs ? ["尚未登记真实实测操作系统"] : []),
     ...(!input.verifiedAt ? ["尚未登记有效的真实实测时间"] : []),

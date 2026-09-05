@@ -19,6 +19,7 @@ async function fixture(mode) {
   const docker = join(fakeBin, "docker");
   await writeFile(docker, `#!/bin/sh
 echo "$SERVER_IMAGE|$CONSOLE_IMAGE|$*" >> "$FAKE_DOCKER_LOG"
+echo "$SKILLHIVE_ALLOW_HTTP|$CONSOLE_BIND_ADDRESS|$REGISTRY_BIND_ADDRESS|$MCP_BIND_ADDRESS" >> "$FAKE_DOCKER_ENV_LOG"
 case "$*" in
   *"ps -q registry"*) echo registry-id ;;
   *"ps -q console"*) echo console-id ;;
@@ -40,15 +41,22 @@ exit 0
   await chmod(docker, 0o755);
   await writeFile(join(directory, "images.tar.gz"), "fake image archive");
   await writeFile(join(directory, "docker-compose.prod.yml"), "services: {}\n");
-  await writeFile(join(directory, ".env"), "TEST_ONLY=1\n");
+  await writeFile(join(directory, ".env"), `TEST_ONLY=1
+SKILLHIVE_ALLOW_HTTP=1
+CONSOLE_BIND_ADDRESS=0.0.0.0
+REGISTRY_BIND_ADDRESS=0.0.0.0
+MCP_BIND_ADDRESS=0.0.0.0
+`);
   return {
     directory,
     log: join(directory, "docker.log"),
+    envLog: join(directory, "docker-env.log"),
     env: {
       ...process.env,
       PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}`,
       SKILLHIVE_DEPLOY_SHA: "abc123",
       FAKE_DOCKER_LOG: join(directory, "docker.log"),
+      FAKE_DOCKER_ENV_LOG: join(directory, "docker-env.log"),
       FAKE_UP_COUNT: join(directory, "up-count"),
       FAKE_MODE: mode,
     },
@@ -70,7 +78,10 @@ describe("remote deployment", () => {
     expect(result.status, result.stderr).toBe(0);
     const log = await readFile(testFixture.log, "utf8");
     expect(log).toContain("tag skillhive-server:old skillhive-server:rollback");
-    expect(log).toContain("run --rm --env-file .env --entrypoint node skillhive-server:abc123");
+    expect(log).toContain("run --rm --env-file .env --entrypoint node --env SKILLHIVE_ALLOW_HTTP");
+    expect(log).toContain("--env MCP_BIND_ADDRESS skillhive-server:abc123");
+    const envLog = await readFile(testFixture.envLog, "utf8");
+    expect(envLog).toContain("|127.0.0.1|127.0.0.1|127.0.0.1");
     expect(log).toContain("skillhive-server:abc123|skillhive-console:abc123|compose -f docker-compose.prod.yml up -d --wait --wait-timeout 180");
     expect(log).toContain("image rm skillhive-server:old");
     expect(log).toContain("image prune -f");
