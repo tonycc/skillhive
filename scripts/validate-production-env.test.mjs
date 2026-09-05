@@ -85,23 +85,21 @@ describe("production environment validation", () => {
     expect(issues.join("\n")).toMatch(/必须使用不同随机值/);
   });
 
-  it("rejects unsafe production transport and public service binds during deployment", () => {
-    const issues = validateProductionEnv({
+  it("leaves transport and bind-address decisions to deployment operators", () => {
+    expect(validateProductionEnv({
       ...validDeploy,
       MCP_BIND_ADDRESS: "0.0.0.0",
       SKILLHIVE_ALLOW_HTTP: "1",
-    }, { phase: "deploy", connectorMeta });
-    expect(issues.join("\n")).toMatch(/回环地址/);
-    expect(issues.join("\n")).toMatch(/禁止启用/);
+    }, { phase: "deploy", connectorMeta })).toEqual([]);
   });
 
-  it("rejects unsafe WorkBuddy endpoints and non-production labels only at launch", () => {
+  it("accepts an operator-approved HTTP IP endpoint but still requires a production label at launch", () => {
     const issues = validateProductionEnv({
       ...validLaunch,
       WORKBUDDY_CONNECTOR_MCP_URL: "http://127.0.0.1:3100/mcp",
       WORKBUDDY_CONNECTOR_ENVIRONMENT: "test",
     }, { phase: "launch", connectorMeta });
-    expect(issues.join("\n")).toMatch(/MCP_URL 无效/);
+    expect(issues.join("\n")).not.toMatch(/MCP_URL 无效/);
     expect(issues.join("\n")).toMatch(/必须是 production/);
   });
 

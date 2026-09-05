@@ -2,7 +2,7 @@
 import { access, lstat, readFile, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseEnterpriseMcpUrl } from "./url.mjs";
+import { parseMcpUrl } from "./url.mjs";
 import {
   validateConnectorMeta,
   validateEnterpriseSkillAssistant,
@@ -15,18 +15,16 @@ import {
 const root = dirname(fileURLToPath(import.meta.url));
 const source = join(root, "skillhive");
 
-const validBuildUrl = parseEnterpriseMcpUrl("https://mcp.skillhive.corp.cn/mcp");
+const validBuildUrl = parseMcpUrl("http://127.0.0.1:3100/mcp");
 if (validBuildUrl.pathname !== "/mcp") throw new Error("企业 MCP 地址校验器未保留 /mcp 路径");
 for (const unsafeUrl of [
-  "http://mcp.skillhive.corp.cn/mcp",
   "https://user:password@mcp.skillhive.corp.cn/mcp",
-  "https://localhost/mcp",
-  "https://127.0.0.1/mcp",
-  "https://company-approved-domain.example/mcp",
   "https://mcp.skillhive.corp.cn/mcp?token=secret",
+  "ftp://mcp.skillhive.corp.cn/mcp",
+  "https://mcp.skillhive.corp.cn/wrong-path",
 ]) {
   try {
-    parseEnterpriseMcpUrl(unsafeUrl);
+    parseMcpUrl(unsafeUrl);
     throw new Error(`企业 MCP 地址校验器错误接受了不安全地址：${unsafeUrl}`);
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("企业 MCP 地址校验器错误接受")) throw error;

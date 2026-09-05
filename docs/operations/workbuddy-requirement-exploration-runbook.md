@@ -26,7 +26,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml ps
 ```
 
-`validate:production` 不输出密钥值。部署联调使用 `deploy`，只检查弱或复用密钥、明文传输开关、显式配置但超范围的保留期，以及直接暴露的服务端口；未填写保留期时使用运行时默认值 90/365 天。该阶段允许企业名称和 WorkBuddy 连接器保持 `unconfigured`，因此代码部署不依赖平台发布准备。准备向目标企业全员推广时必须执行 `pnpm validate:production -- --env-file .env --phase launch`，再检查正式企业名、生产连接器标记、获批 HTTPS `/mcp` 地址、连接器元数据、平台审核、公开市场入口以及真实客户端版本、操作系统和实测时间。
+`validate:production` 不输出密钥值。部署联调使用 `deploy`，检查弱或复用密钥和显式配置但超范围的保留期；未填写保留期时使用运行时默认值 90/365 天。HTTP 开关、监听地址和网络暴露范围不再由代码门禁判断，由部署人员人工复核并通过防火墙、安全组或 VPN 控制。该阶段允许企业名称和 WorkBuddy 连接器保持 `unconfigured`，因此代码部署不依赖平台发布准备。准备向目标企业全员推广时必须执行 `pnpm validate:production -- --env-file .env --phase launch`，再检查正式企业名、生产连接器标记、已确认的 HTTP(S) `/mcp` 地址、连接器元数据、平台审核、公开市场入口以及真实客户端版本、操作系统和实测时间；是否满足公开市场的 HTTPS 要求由发布人员人工确认。
 
 仓库自动部署使用 commit SHA 镜像标签，在远端切换前以容器进程环境执行同一 `deploy` 门禁，并通过 Compose 等待 PostgreSQL、Registry、MCP 和 Console 健康。远端脚本维护一套 `rollback` 应用镜像：健康切换失败时恢复它并清理失败镜像；成功后保留新的当前版本和一套回退版本，清理更早的无用标签，避免版本标签持续占满磁盘。首次部署没有可恢复镜像时保持失败状态，由运维排查后重试。数据库迁移是前向操作，不能把镜像恢复误称为数据库回滚。
 
@@ -37,7 +37,7 @@ curl --fail http://127.0.0.1:3001/health
 curl --fail http://127.0.0.1:3100/health
 ```
 
-生产部署至少包括不同的 32 字符以上随机 `SKILLHIVE_SESSION_SECRET` 和 `SKILLHIVE_INTERNAL_TOKEN`、强数据库密码及安全监听边界；保留期未填写时使用 90/365 天默认值。企业名称和连接器字段可以在代码部署后补充，未配置期间管理端显示未就绪，不能构建或发布正式连接器。确定正式地址后填写 `WORKBUDDY_CONNECTOR_MCP_URL=https://<企业域名>/mcp`；平台提交、审核、实测和市场入口状态分别记录在 `WORKBUDDY_CONNECTOR_*` / `WORKBUDDY_VERIFIED_*` 配置中。不要把 `.env`、员工令牌或内部令牌提交到 Git、连接器包或工单正文。
+生产部署至少包括不同的 32 字符以上随机 `SKILLHIVE_SESSION_SECRET` 和 `SKILLHIVE_INTERNAL_TOKEN`、强数据库密码及经人工批准的监听边界；保留期未填写时使用 90/365 天默认值。IP 联调时可填写 `WORKBUDDY_CONNECTOR_MCP_URL=http://<服务器IP>:<端口>/mcp` 并设置 `SKILLHIVE_ALLOW_HTTP=1`；正式提交前再由发布人员确认是否切换为平台要求的 HTTPS 地址。平台提交、审核、实测和市场入口状态分别记录在 `WORKBUDDY_CONNECTOR_*` / `WORKBUDDY_VERIFIED_*` 配置中。不要把 `.env`、员工令牌或内部令牌提交到 Git、连接器包或工单正文。
 
 ## 3. 规则上线
 
@@ -70,14 +70,14 @@ pnpm dev:cli -- validate "$PWD/examples/seed-skills/requirement-exploration/SKIL
 
 ## 5. 正式连接器构建与验证
 
-在隔离构建环境中使用获批真实地址：
+在隔离构建环境中使用人工确认的联调或正式地址：
 
 ```bash
-pnpm connector:build -- https://<企业域名>/mcp
+pnpm connector:build -- http://<服务器IP>:<端口>/mcp
 pnpm connector:verify
 ```
 
-构建脚本会拒绝凭据、查询参数、IP、本机地址和 `.example` 等示例保留域名。产物目录、版本化 ZIP 和包外 SHA-256 清单位于 `integrations/workbuddy/dist/` 且被 Git 忽略；独立校验命令会再次核对 ZIP 摘要、精确文件集合、逐文件摘要和秘密扫描。也可由手动 GitHub Actions 工作流从受控 Secret 注入正式地址，生成保留 7 天的审核产物。上传前按[连接器提交与实测记录](./workbuddy-connector-submission-record.md)核对摘要，确认包内没有令牌、内部地址、测试正文或日志。必须在真实 WorkBuddy 客户端记录以下证据：
+构建脚本允许 HTTP、IP、本机地址和测试域名，仅拒绝 URL 凭据、查询参数、片段及错误路径。产物目录、版本化 ZIP 和包外 SHA-256 清单位于 `integrations/workbuddy/dist/` 且被 Git 忽略；独立校验命令会再次核对 ZIP 摘要、精确文件集合、逐文件摘要和秘密扫描。也可由手动 GitHub Actions 工作流从受控 Secret 注入地址，生成保留 7 天的构建产物。提交公开市场前，发布人员必须人工确认地址、HTTPS、网络范围和平台合规性，并按[连接器提交与实测记录](./workbuddy-connector-submission-record.md)核对摘要，确认包内没有令牌、未经批准的内部地址、测试正文或日志。必须在真实 WorkBuddy 客户端记录以下证据：
 
 审核包由个人实名认证开发者提交到 WorkBuddy 公开市场。平台审核通过、市场公开上架、目标企业授权接入和目标企业全员推广是不同状态：公开市场允许所有用户发现和安装连接器，但服务端只向持目标企业有效员工令牌的请求返回数据。市场页不得使用“WorkBuddy 官方连接器”等可能暗示平台运营或背书的名称。
 

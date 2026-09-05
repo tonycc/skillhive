@@ -15,12 +15,6 @@ test -f "$compose_file" || { echo "Compose 文件不存在：$compose_file" >&2;
 test -f .env || { echo "生产 .env 不存在" >&2; exit 1; }
 
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-skillhive}"
-# 部署联调始终经同机 TLS 反向代理访问。覆盖历史 .env 中可能遗留的明文开关和对外监听，
-# 但不改写服务器上的 .env 或其中的任何密钥。
-export SKILLHIVE_ALLOW_HTTP=""
-export CONSOLE_BIND_ADDRESS="127.0.0.1"
-export REGISTRY_BIND_ADDRESS="127.0.0.1"
-export MCP_BIND_ADDRESS="127.0.0.1"
 new_server="skillhive-server:${SKILLHIVE_DEPLOY_SHA}"
 new_console="skillhive-console:${SKILLHIVE_DEPLOY_SHA}"
 
@@ -41,12 +35,7 @@ rm -f "$artifact"
 docker image inspect "$new_server" >/dev/null
 docker image inspect "$new_console" >/dev/null
 
-if ! docker run --rm --env-file .env --entrypoint node \
-  --env SKILLHIVE_ALLOW_HTTP \
-  --env CONSOLE_BIND_ADDRESS \
-  --env REGISTRY_BIND_ADDRESS \
-  --env MCP_BIND_ADDRESS \
-  "$new_server" \
+if ! docker run --rm --env-file .env --entrypoint node "$new_server" \
   scripts/validate-production-env.mjs --from-process --phase deploy; then
   docker image rm "$new_server" "$new_console" >/dev/null 2>&1 || true
   exit 1

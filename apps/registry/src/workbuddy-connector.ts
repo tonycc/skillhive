@@ -13,10 +13,23 @@ function isReservedHostname(hostname: string): boolean {
     );
 }
 
-export function optionalEnterpriseHttpsUrl(
-  raw: string | undefined,
-  requiredPath?: string,
-): { value: string | null; valid: boolean } {
+export function optionalMcpUrl(raw: string | undefined): { value: string | null; valid: boolean } {
+  if (!raw?.trim()) return { value: null, valid: false };
+  try {
+    const url = new URL(raw.trim());
+    const valid = ["http:", "https:"].includes(url.protocol)
+      && !url.username
+      && !url.password
+      && !url.search
+      && !url.hash
+      && url.pathname === "/mcp";
+    return { value: valid ? url.toString() : null, valid };
+  } catch {
+    return { value: null, valid: false };
+  }
+}
+
+export function optionalPublicHttpsUrl(raw: string | undefined): { value: string | null; valid: boolean } {
   if (!raw?.trim()) return { value: null, valid: false };
   try {
     const url = new URL(raw.trim());
@@ -25,8 +38,7 @@ export function optionalEnterpriseHttpsUrl(
       && !url.password
       && !url.search
       && !url.hash
-      && !isReservedHostname(url.hostname)
-      && (!requiredPath || url.pathname === requiredPath);
+      && !isReservedHostname(url.hostname);
     return { value: valid ? url.toString() : null, valid };
   } catch {
     return { value: null, valid: false };
@@ -44,7 +56,7 @@ export interface WorkBuddyReadinessInput {
 }
 
 export function workBuddyConnectorReadiness(input: WorkBuddyReadinessInput) {
-  const packageIssues = input.mcpUrlValid ? [] : ["尚未配置合法的非示例 HTTPS /mcp 企业地址"];
+  const packageIssues = input.mcpUrlValid ? [] : ["尚未配置合法的 HTTP(S) /mcp 企业地址"];
   const clientTestIssues = [
     ...packageIssues,
     ...(!["test", "production"].includes(input.environment) ? ["部署环境必须标记为测试或生产"] : []),

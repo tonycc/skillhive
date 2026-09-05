@@ -1,35 +1,42 @@
 import { describe, expect, it } from "vitest";
-import { optionalEnterpriseHttpsUrl, workBuddyConnectorReadiness } from "./workbuddy-connector.js";
+import { optionalMcpUrl, optionalPublicHttpsUrl, workBuddyConnectorReadiness } from "./workbuddy-connector.js";
 
-describe("optionalEnterpriseHttpsUrl", () => {
-  it("accepts a credential-free enterprise HTTPS MCP address", () => {
-    expect(optionalEnterpriseHttpsUrl("https://mcp.skillhive.corp.cn/mcp", "/mcp")).toEqual({
+describe("optionalMcpUrl", () => {
+  it("accepts credential-free HTTP, HTTPS and IP MCP addresses", () => {
+    expect(optionalMcpUrl("https://mcp.skillhive.corp.cn/mcp")).toEqual({
       value: "https://mcp.skillhive.corp.cn/mcp",
+      valid: true,
+    });
+    expect(optionalMcpUrl("http://127.0.0.1:3100/mcp")).toEqual({
+      value: "http://127.0.0.1:3100/mcp",
       valid: true,
     });
   });
 
   it.each([
-    "http://mcp.skillhive.corp.cn/mcp",
     "https://user:password@mcp.skillhive.corp.cn/mcp",
-    "https://localhost/mcp",
-    "https://127.0.0.1/mcp",
-    "https://company-approved-domain.example/mcp",
     "https://mcp.skillhive.corp.cn/mcp?token=secret",
     "https://mcp.skillhive.corp.cn/wrong-path",
+    "ftp://mcp.skillhive.corp.cn/mcp",
   ])("rejects an unsafe or incompatible MCP address: %s", (url) => {
-    expect(optionalEnterpriseHttpsUrl(url, "/mcp")).toEqual({ value: null, valid: false });
+    expect(optionalMcpUrl(url)).toEqual({ value: null, valid: false });
   });
 
+  it("treats an absent address as not configured", () => {
+    expect(optionalMcpUrl(undefined)).toEqual({ value: null, valid: false });
+  });
+});
+
+describe("optionalPublicHttpsUrl", () => {
   it("accepts a normal HTTPS market URL without imposing the MCP path", () => {
-    expect(optionalEnterpriseHttpsUrl("https://market.workbuddy.cn/connectors/skillhive")).toEqual({
+    expect(optionalPublicHttpsUrl("https://market.workbuddy.cn/connectors/skillhive")).toEqual({
       value: "https://market.workbuddy.cn/connectors/skillhive",
       valid: true,
     });
   });
 
-  it("treats an absent address as not configured", () => {
-    expect(optionalEnterpriseHttpsUrl(undefined, "/mcp")).toEqual({ value: null, valid: false });
+  it("still rejects non-public market URLs", () => {
+    expect(optionalPublicHttpsUrl("http://127.0.0.1/market")).toEqual({ value: null, valid: false });
   });
 });
 

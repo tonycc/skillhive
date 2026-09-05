@@ -91,14 +91,14 @@ docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 生产环境会拒绝空密码、短于 32 字符的会话密钥或内部令牌；WorkBuddy 上线门禁还会拒绝
-低复杂度或复用密钥。端口只绑定 `127.0.0.1`，由服务器前的企业 HTTPS 反向代理对外提供服务；
-当前方案不允许把对应的 `*_BIND_ADDRESS` 改为局域网地址或 `0.0.0.0`。Console 会在同域代理
+低复杂度或复用密钥。端口默认绑定 `127.0.0.1`；部署人员可按联调网络将对应的
+`*_BIND_ADDRESS` 改为局域网地址或 `0.0.0.0`，并自行通过防火墙、安全组或 VPN 控制访问来源。Console 会在同域代理
 `/sse`、`/messages` 与 `/mcp`，因此默认 `PUBLIC_MCP_URL=/sse` 不会降级为明文跨域连接。
 `PUBLIC_MCP_URL` 仍用于兼容 SSE 客户端且只接受根路径 `/sse`；公开市场连接器独立使用同域
 `/mcp` Streamable HTTP 入口。带路径前缀、查询参数或片段的 SSE 地址会在 MCP 启动时被拒绝，
 避免生成无法投递 `/messages` 的半可用配置。
-MCP 在生产模式会拒绝非 HTTPS 的外部请求；只有明确评估过受控明文网络后才可设置
-`SKILLHIVE_ALLOW_HTTP=1`。前置 TLS 代理必须覆盖（不能直接透传客户端提供的）
+MCP 在生产模式默认拒绝非 HTTPS 的外部请求；IP 联调可由部署人员设置
+`SKILLHIVE_ALLOW_HTTP=1`。项目不再通过部署门禁判断传输协议和监听范围，相关风险由人工审批和网络策略控制。使用前置 TLS 代理时必须覆盖（不能直接透传客户端提供的）
 `X-Forwarded-Proto: https` 与 `X-Forwarded-For`，并保持原始 `Host`；不要将 Console、
 Registry 或 MCP 的容器端口直接暴露到不受信网络。
 
@@ -127,7 +127,7 @@ registry 首次启动会自动执行数据库迁移；在 `.env` 中设置 `SKIL
 提交前运行 `pnpm check`，会依次执行 ESLint、全 workspace 类型检查、单元测试、WorkBuddy 连接器源文件校验和
 可直接启动的生产构建。数据库运行时可用
 `pnpm smoke:workbuddy` 验证管理员、员工令牌、草稿、隔离、幂等、提交和评审闭环；`pnpm load:workbuddy`
-通过真实 Streamable HTTP `/mcp` 地址执行读/写并发性能验收。真实企业 HTTPS 地址确认后，按
+通过真实 Streamable HTTP `/mcp` 地址执行读/写并发性能验收。连接器地址确认后，按
 [连接器构建说明](integrations/workbuddy/README.md) 生成待审核目录。部署前使用 `pnpm validate:production -- --env-file .env --phase deploy` 校验核心密钥、传输安全、监听边界和显式保留期；该阶段允许 WorkBuddy 保持 `unconfigured`。向目标企业全员推广前改用 `--phase launch`，再校验正式企业信息、连接器地址、平台审核和客户端证据。CI 还会检查生产依赖高危漏洞与 Compose 配置。
 
 ## 许可证

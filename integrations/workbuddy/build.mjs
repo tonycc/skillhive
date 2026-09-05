@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { parseEnterpriseMcpUrl } from "./url.mjs";
+import { parseMcpUrl } from "./url.mjs";
 import { validateBuiltMcp } from "./manifest-validation.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -28,8 +28,8 @@ async function sha256(path) {
   return createHash("sha256").update(await readFile(path)).digest("hex");
 }
 
-if (!rawUrl) throw new Error("缺少企业 MCP 地址；用法：node build.mjs https://企业域名/mcp");
-const url = parseEnterpriseMcpUrl(rawUrl);
+if (!rawUrl) throw new Error("缺少企业 MCP 地址；用法：node build.mjs http://服务器地址/mcp");
+const url = parseMcpUrl(rawUrl);
 
 await execFileAsync(process.execPath, [join(root, "validate.mjs")]);
 

@@ -28,7 +28,7 @@ import {
   payloadSize,
   validateSubmission,
 } from "../exploration-data.js";
-import { optionalEnterpriseHttpsUrl, workBuddyConnectorReadiness } from "../workbuddy-connector.js";
+import { optionalMcpUrl, optionalPublicHttpsUrl, workBuddyConnectorReadiness } from "../workbuddy-connector.js";
 import { parseSkillMd, validateResourcePath, type SkillResourceFile } from "@skillhive/skill-schema";
 import { validateRequirementExplorationApplicationSkill } from "../built-in-applications.js";
 
@@ -1003,8 +1003,8 @@ function boundedEnv(name: string, fallback: string, max = 256): string {
 }
 
 admin.get("/connector", (c) => {
-  const mcpUrl = optionalEnterpriseHttpsUrl(process.env.WORKBUDDY_CONNECTOR_MCP_URL, "/mcp");
-  const marketUrl = optionalEnterpriseHttpsUrl(process.env.WORKBUDDY_CONNECTOR_MARKET_URL);
+  const mcpUrl = optionalMcpUrl(process.env.WORKBUDDY_CONNECTOR_MCP_URL);
+  const marketUrl = optionalPublicHttpsUrl(process.env.WORKBUDDY_CONNECTOR_MARKET_URL);
   const verifiedAtRaw = process.env.WORKBUDDY_VERIFIED_AT?.trim();
   const verifiedAt = verifiedAtRaw && !Number.isNaN(Date.parse(verifiedAtRaw))
     ? new Date(verifiedAtRaw).toISOString()
@@ -1036,7 +1036,7 @@ admin.get("/connector", (c) => {
     verifiedAt,
     ...readiness,
     configurationIssues: [
-      ...(!mcpUrl.valid ? ["尚未配置合法的非示例 HTTPS /mcp 企业地址"] : []),
+      ...(!mcpUrl.valid ? ["尚未配置合法的 HTTP(S) /mcp 企业地址"] : []),
       ...(process.env.WORKBUDDY_CONNECTOR_MARKET_URL?.trim() && !marketUrl.valid ? ["公开市场入口不是合法 HTTPS 地址"] : []),
       ...(verifiedAtRaw && !verifiedAt ? ["实测时间格式无效"] : []),
     ],

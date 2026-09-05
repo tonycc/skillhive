@@ -9,7 +9,7 @@ pnpm connector:build -- "$WORKBUDDY_CONNECTOR_MCP_URL"
 pnpm connector:verify
 ```
 
-先由 IT 将 `WORKBUDDY_CONNECTOR_MCP_URL` 注入为获批的真实企业地址。构建命令只接受不含凭据、查询参数或片段的 HTTPS `/mcp` 地址，并拒绝 IP、本机地址和 `.example` 等示例保留域名；它会在 `integrations/workbuddy/dist/` 生成符合官方目录结构的 `skillhive/`、可提交的版本化 ZIP，以及包外的 SHA-256 文件清单。`connector:verify` 会重新读取 ZIP，核对归档摘要、精确文件集合和每个包内文件摘要，并再次扫描真实凭据与服务端秘密配置。构建产物被 Git 忽略，提交审核前还必须按[提交与实测记录](../../docs/operations/workbuddy-connector-submission-record.md)人工复核，并在真实 WorkBuddy 客户端验证安装、Token 表单、工具发现、草稿保存、正式提交和吊销生效。
+先由 IT 将 `WORKBUDDY_CONNECTOR_MCP_URL` 注入为已确认的测试或正式地址。构建命令接受域名或 IP 形式的 HTTP(S) `/mcp` 地址，但仍拒绝 URL 凭据、查询参数、片段和错误路径；它会在 `integrations/workbuddy/dist/` 生成符合官方目录结构的 `skillhive/`、版本化 ZIP，以及包外的 SHA-256 文件清单。`connector:verify` 会重新读取 ZIP，核对归档摘要、精确文件集合和每个包内文件摘要，并再次扫描真实凭据与服务端秘密配置。协议、地址、网络暴露范围及其是否符合平台提交要求由发布人员人工确认。构建产物被 Git 忽略，提交审核前还必须按[提交与实测记录](../../docs/operations/workbuddy-connector-submission-record.md)人工复核，并在真实 WorkBuddy 客户端验证安装、Token 表单、工具发现、草稿保存、正式提交和吊销生效。
 
 仓库提供手动 GitHub Actions 工作流 `Build WorkBuddy Connector Review Package`。在仓库 Secret `WORKBUDDY_CONNECTOR_MCP_URL` 中配置获批地址后手动运行；工作流不会打印地址，只上传版本化 ZIP 和 SHA-256 清单，并在 7 天后自动删除 Actions 产物。下载后仍须核对摘要并通过批准渠道提交，不得把 Actions 产物链接当作员工安装入口。
 

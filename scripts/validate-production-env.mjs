@@ -2,7 +2,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath, URL } from "node:url";
-import { parseEnterpriseMcpUrl } from "../integrations/workbuddy/url.mjs";
+import { parseMcpUrl } from "../integrations/workbuddy/url.mjs";
 
 const COMMON_SECRETS = new Set([
   "password",
@@ -12,7 +12,6 @@ const COMMON_SECRETS = new Set([
   "secret",
   "skillhive",
 ]);
-const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)/;
 
 export function parseEnvFile(content) {
@@ -71,18 +70,12 @@ export function validateProductionEnv(env, { phase = "deploy", connectorMeta }) 
     issues.push("SKILLHIVE_SESSION_SECRET 与 SKILLHIVE_INTERNAL_TOKEN 必须使用不同随机值");
   }
 
-  if (env.SKILLHIVE_ALLOW_HTTP === "1") issues.push("生产环境禁止启用 SKILLHIVE_ALLOW_HTTP=1");
   for (const name of ["EXPLORATION_DRAFT_RETENTION_DAYS", "EXPLORATION_SUBMITTED_RETENTION_DAYS"]) {
     const raw = env[name]?.trim();
     if (!raw) continue;
     const value = Number(raw);
     if (!Number.isInteger(value) || value < 1 || value > 3_650) issues.push(`${name} 必须是 1—3650 天的整数`);
   }
-  for (const name of ["CONSOLE_BIND_ADDRESS", "REGISTRY_BIND_ADDRESS", "MCP_BIND_ADDRESS"]) {
-    const value = env[name] || "127.0.0.1";
-    if (!LOOPBACK.has(value)) issues.push(`${name} 必须保持回环地址，由受信 TLS 反向代理对外提供服务`);
-  }
-
   const hasBootstrapField = ["SKILLHIVE_ADMIN_EMAIL", "SKILLHIVE_ADMIN_NAME", "SKILLHIVE_ADMIN_PASSWORD"]
     .some((name) => Boolean(env[name]?.trim()));
   if (hasBootstrapField) {
@@ -97,9 +90,9 @@ export function validateProductionEnv(env, { phase = "deploy", connectorMeta }) 
       issues.push("WORKBUDDY_CONNECTOR_ENVIRONMENT 必须是 production");
     }
     try {
-      parseEnterpriseMcpUrl(env.WORKBUDDY_CONNECTOR_MCP_URL ?? "");
+      parseMcpUrl(env.WORKBUDDY_CONNECTOR_MCP_URL ?? "");
     } catch (error) {
-      issues.push(`WORKBUDDY_CONNECTOR_MCP_URL 无效：${error instanceof Error ? error.message : "必须是企业 HTTPS /mcp 地址"}`);
+      issues.push(`WORKBUDDY_CONNECTOR_MCP_URL 无效：${error instanceof Error ? error.message : "必须是 HTTP(S) /mcp 地址"}`);
     }
     for (const [name, expected] of [
       ["WORKBUDDY_CONNECTOR_SOURCE", connectorMeta.source],
