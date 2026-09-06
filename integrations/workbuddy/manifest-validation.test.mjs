@@ -62,13 +62,13 @@ const enterpriseSkillAssistant = `---
 description: 查找企业 Skill
 description_zh: 查找企业 Skill
 description_en: Find enterprise skills
-allowed-tools: search_capabilities, list_capabilities, search_skills, list_skills, get_skill, list_skill_files, get_skill_file, get_connector_status, start_exploration, list_my_explorations, get_exploration, save_exploration, submit_exploration, abandon_exploration
+allowed-tools: search_capabilities, list_capabilities, get_skill, list_skill_files, get_skill_file, get_connector_status, start_exploration, list_my_explorations, get_exploration, save_exploration, submit_exploration, abandon_exploration
 version: 1.0.0
 author: SkillHive
 user-invocable: true
 ---
 @references/tool-contracts.md
-\`search_capabilities\` \`list_capabilities\` \`search_skills\` \`list_skills\` \`get_skill\` \`list_skill_files\` \`get_skill_file\`
+\`search_capabilities\` \`list_capabilities\` \`get_skill\` \`list_skill_files\` \`get_skill_file\`
 \`get_connector_status\` \`start_exploration\` \`list_my_explorations\` \`get_exploration\` \`save_exploration\` \`submit_exploration\` \`abandon_exploration\`
 根据 entryType 和 applicationKey 路由；requirement-exploration 使用应用流程。
 `;

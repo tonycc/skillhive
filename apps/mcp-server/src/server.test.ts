@@ -148,7 +148,7 @@ describe("employee MCP tools", () => {
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
     try {
       const searchResult = await client.callTool({
-        name: "search_skills",
+        name: "search_capabilities",
         arguments: { query: "帮我整理周报" },
       });
       const searchContent = searchResult.content as Array<{ type: string; text?: string }>;
@@ -159,13 +159,6 @@ describe("employee MCP tools", () => {
         entryType: "skill",
         applicationKey: null,
       });
-
-      const ordinaryApplicationSearch = await client.callTool({
-        name: "search_skills",
-        arguments: { query: "需求" },
-      });
-      const ordinaryApplicationContent = ordinaryApplicationSearch.content as Array<{ type: string; text?: string }>;
-      expect(JSON.parse(ordinaryApplicationContent[0]?.text ?? "[]")).toEqual([]);
 
       const capabilitySearch = await client.callTool({
         name: "search_capabilities",
@@ -179,11 +172,16 @@ describe("employee MCP tools", () => {
         entryTool: "start_exploration",
       })]);
 
-      const listResult = await client.callTool({ name: "list_skills", arguments: {} });
+      const listResult = await client.callTool({ name: "list_capabilities", arguments: {} });
       const listContent = listResult.content as Array<{ type: string; text?: string }>;
       const listed = JSON.parse(listContent[0]?.text ?? "[]") as Array<Record<string, unknown>>;
-      expect(listed).toHaveLength(2);
-      expect(listed.some((item) => item.applicationKey === "requirement-exploration")).toBe(false);
+      expect(listed).toHaveLength(3);
+      expect(listed.some((item) => item.applicationKey === "requirement-exploration")).toBe(true);
+
+      const tools = await client.listTools();
+      const toolNames = tools.tools.map((tool) => tool.name);
+      expect(toolNames).not.toContain("list_skills");
+      expect(toolNames).not.toContain("search_skills");
     } finally {
       await Promise.all([client.close(), server.close()]);
     }

@@ -12,8 +12,6 @@ const REQUIRED_EXPLORATION_TOOLS = [
 const REQUIRED_ENTERPRISE_SKILL_TOOLS = [
   "search_capabilities",
   "list_capabilities",
-  "search_skills",
-  "list_skills",
   "get_skill",
   "list_skill_files",
   "get_skill_file",

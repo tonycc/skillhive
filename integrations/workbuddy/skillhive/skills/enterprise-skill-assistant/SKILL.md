@@ -5,8 +5,8 @@ display_name_en: Enterprise Skill Assistant
 description: 当员工提出可能由公司制度、流程、模板、普通 Skill 或应用支持的工作任务时，优先使用本助手检索企业能力。
 description_zh: 根据员工当前任务统一检索其有权使用的普通 Skill 和应用；不检索应用内部 Skill。
 description_en: Find employee-accessible enterprise skills and applications for the current task, then load the selected entry's effective instructions.
-allowed-tools: search_capabilities, list_capabilities, search_skills, list_skills, get_skill, list_skill_files, get_skill_file, get_connector_status, start_exploration, list_my_explorations, get_exploration, save_exploration, submit_exploration, abandon_exploration
-version: 1.3.0
+allowed-tools: search_capabilities, list_capabilities, get_skill, list_skill_files, get_skill_file, get_connector_status, start_exploration, list_my_explorations, get_exploration, save_exploration, submit_exploration, abandon_exploration
+version: 1.4.0
 author: SkillHive
 user-invocable: true
 disable-model-invocation: false
@@ -21,7 +21,7 @@ disable-model-invocation: false
 ## 发现与选择
 
 1. 员工明确要求查看全部可用能力时调用 `list_capabilities`；其他情况优先将员工当前完整任务原样传给 `search_capabilities`（超过 128 字时保留最能表达目标的部分），不要先压缩成单个关键词。这两个工具统一返回普通 Skill 和应用，但不返回应用内部 Skill。
-2. 员工明确要求只查看普通 Skill 时，可以使用 `list_skills` 或 `search_skills`；这两个工具永远不返回应用及应用 Skill。
+2. 发现入口统一使用 `search_capabilities` 或 `list_capabilities`；不要使用已移除的普通 Skill 专用发现接口。
 3. 结果只有一个且与意图清晰匹配时可以直接加载；有多个合理候选时，最多展示三个候选的名称和简介，让员工选择，不根据名称臆测 Skill 正文。
 4. 没有匹配项时如实说明。可以换用更接近名称、触发词、简介、分类或标签的查询再搜索一次，但不要循环尝试或编造标识。
 5. 只使用工具返回的、当前员工可见的结果；不得尝试猜测或读取未返回的 Skill 或应用。

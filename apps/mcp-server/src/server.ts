@@ -311,20 +311,6 @@ export async function createServer(identity: CallerIdentity): Promise<SkillHiveS
     }
   });
 
-  server.tool(
-    "search_skills",
-    "按关键词搜索当前员工有权访问的普通企业 AI Skill；不返回应用或应用 Skill",
-    { query: z.string().trim().min(1).max(128).describe("搜索关键词，如：周报、邮件、翻译") },
-    async ({ query }) => {
-      try {
-        const matched = rankCapabilities(await fetchVisibleSkills(identity), query);
-        return jsonToolResult(matched.map(discoveryItem));
-      } catch (error) {
-        return toolError(error, "技能列表");
-      }
-    },
-  );
-
   if (identity.subjectType === "employee") {
     server.tool(
       "get_connector_status",
@@ -442,15 +428,6 @@ export async function createServer(identity: CallerIdentity): Promise<SkillHiveS
       },
     );
   }
-
-  server.tool("list_skills", "列出当前员工有权访问的所有已发布普通 AI Skill；不返回应用 Skill", {}, async () => {
-    try {
-      const skills = await fetchVisibleSkills(identity);
-      return jsonToolResult(skills.map(discoveryItem));
-    } catch (error) {
-      return toolError(error, "技能列表");
-    }
-  });
 
   server.tool(
     "get_skill",
